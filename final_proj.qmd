@@ -78,69 +78,6 @@ ggplot(data, aes(x = BMXBMI)) +
 
 # LASSO Regression
 
-```{r}
-# Load necessary libraries
-library(glmnet)
-
-# Load the data
-data <- read.csv("data.csv")
-
-# Remove non-predictive columns
-data <- data[, !colnames(data) %in% c("SEQN")]
-
-# Define dependent variable (y) and predictors (X)
-y <- as.factor(data$depressed)  # Dependent variable
-X <- as.matrix(data[, !colnames(data) %in% "depressed"])  # All other columns as predictors
-
-# Fit LASSO using cross-validation
-set.seed(123)  # For reproducibility
-cv_lasso <- cv.glmnet(X, y, family = "binomial", alpha = 1)
-
-# Identify the best lambda value
-best_lambda <- cv_lasso$lambda.min
-
-# Fit the final model with the best lambda
-lasso_model <- glmnet(X, y, family = "binomial", alpha = 1, lambda = best_lambda)
-
-# Extract selected variables
-selected_variables <- rownames(coef(lasso_model))[coef(lasso_model)[,1] != 0]
-selected_variables <- selected_variables[selected_variables != "(Intercept)"]
-
-# Print the selected variables
-cat("Selected variables:\n")
-print(selected_variables)
-
-
-# Cross-validation plot with arrows and properly placed labels
-plot(cv_lasso)
-title("Cross-Validation Error vs Lambda", line = 2.5)
-
-# Get the range of y-axis values
-y_min <- min(cv_lasso$cvm)
-y_max <- max(cv_lasso$cvm)
-
-# Add arrow and label for lambda.min
-arrows(x0 = log(cv_lasso$lambda.min), y0 = y_min,
-       x1 = log(cv_lasso$lambda.min), y1 = y_min + 0.02 * (y_max - y_min),
-       col = "#660211", length = 0.1)
-text(x = log(cv_lasso$lambda.min), y = y_min + 0.9 * (y_max - y_min),
-     labels = "lambda.min", col = "#660211", cex = 0.8)
-
-# Add arrow and label for lambda.1se
-arrows(x0 = log(cv_lasso$lambda.1se), y0 = y_min,
-       x1 = log(cv_lasso$lambda.1se), y1 = y_min + 0.02 * (y_max - y_min),
-       col = "#232245", length = 0.1)
-text(x = log(cv_lasso$lambda.1se), y = y_min + 0.9 * (y_max - y_min),
-     labels = "lambda.1se", col = "#232245", cex = 0.8)
-
-
-
-# Coefficient path plot
-plot(lasso_model, xvar = "lambda", label = TRUE)
-title("Coefficient Path Plot", line = 2.5)
-
-```
-
 
 ```{r}
 # 加载必要的包
@@ -177,11 +114,18 @@ X_nominal_encoded <- model.matrix(~ . - 1, data = data %>% select(all_of(nominal
 # 合并连续变量、有序分类变量、哑变量
 X_processed <- cbind(X_continuous_scaled, data %>% select(all_of(ordinal_vars)), X_nominal_encoded)
 
+# 将 X_processed 转换为标准矩阵
+X_processed <- as.matrix(X_processed)
+
+# 确保矩阵中的数据都是数值类型
+X_processed <- apply(X_processed, 2, as.numeric)
+
 # 提取因变量
 y <- data$depressed
 
 # 使用 LASSO 进行建模
 lasso_model <- cv.glmnet(X_processed, y, alpha = 1, family = "binomial")
+
 
 # 提取非零系数的变量
 coef_matrix <- coef(lasso_model, s = "lambda.min")

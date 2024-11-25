@@ -9,12 +9,70 @@ library(ggplot2)
 library(dplyr)
 library(tidyverse)
 library(lme4)
+library(reshape2)
+library(corrplot)
+library(inspectdf)
 ```
 
 # Exploratory Data Analysis
 
-```{r}
+```{r prep, echo=FALSE}
+data <- read.csv("data.csv")
+non_fac <- c("SEQN", "RIDAGEYR", "INDFMPIR", "BMXBMI", "DBD895", "DBD905", "DBD910")
 
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  mutate(across(!all_of(non_fac), as.factor))
+```
+
+```{r EDA, echo=FALSE}
+# Step 2: Reshape data into a long format for ggplot
+# Gather categorical variables into a key-value pair structure
+long_data <- data %>%
+  select(! all_of(non_fac)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category")
+
+# Step 3: Calculate proportions for each category in each variable
+prop_data <- long_data %>%
+  group_by(Variable, Category) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  group_by(Variable) %>%
+  mutate(Proportion = Count / sum(Count)) %>%
+  arrange(Variable, desc(Category)) %>% # Arrange for consistent stacking
+  mutate(Cumulative = cumsum(Proportion) - Proportion / 2) # Position for labels
+
+# Step 4: Create stacked bar chart with proportion labels
+ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  geom_text(aes(label = scales::percent(Proportion, accuracy = 1), y = Cumulative),
+            color = "black", size = 3) + # Add labels on the bars
+  labs(
+    title = "Proportions of Categories for Each Categorical Variable",
+    x = "Categorical Variables",
+    y = "Proportion"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+```{r, echo=FALSE}
+# 2. Correlation Heatmap for Numeric Variables
+# Select numeric columns
+numeric_data <- data[sapply(data, is.numeric)]
+
+# Compute correlations
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+# Plot heatmap
+corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
+
+# 3. Distribution of Numeric Variables
+# Example: Histogram for a single numeric variable (e.g., BMXBMI)
+ggplot(data, aes(x = BMXBMI)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
+  labs(title = "Histogram of BMXBMI", x = "BMXBMI", y = "Frequency") +
+  theme_minimal()
 
 ```
 

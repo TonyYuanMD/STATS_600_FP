@@ -12,33 +12,40 @@ library(lme4)
 library(reshape2)
 library(corrplot)
 library(inspectdf)
+library(glmnet)
 ```
 
 # Exploratory Data Analysis
 
 ```{r prep, echo=FALSE}
 data <- read.csv("data.csv")
-non_fac <- c("SEQN", "RIDAGEYR", "INDFMPIR", "BMXBMI", "DBD895", "DBD905", "DBD910")
+# 手动分类变量
+nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
+                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
+ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
+                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
+continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
 
 # Negate to select factor variables (columns NOT in non_factor_vars)
 data <- data |>
-  mutate(across(!all_of(non_fac), as.factor))
+  select(- SEQN) |>
+  mutate(across(!all_of(continuous_vars), as.factor))
 ```
 
 ```{r EDA, echo=FALSE}
 # Step 2: Reshape data into a long format for ggplot
 # Gather categorical variables into a key-value pair structure
-long_data <- data %>%
-  select(! all_of(non_fac)) %>%
+long_data <- data |>
+  select(! all_of(continuous_vars)) |>
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category")
 
 # Step 3: Calculate proportions for each category in each variable
-prop_data <- long_data %>%
-  group_by(Variable, Category) %>%
-  summarise(Count = n(), .groups = "drop") %>%
-  group_by(Variable) %>%
-  mutate(Proportion = Count / sum(Count)) %>%
-  arrange(Variable, desc(Category)) %>% # Arrange for consistent stacking
+prop_data <- long_data |>
+  group_by(Variable, Category) |>
+  summarise(Count = n(), .groups = "drop") |>
+  group_by(Variable) |>
+  mutate(Proportion = Count / sum(Count)) |>
+  arrange(Variable, desc(Category)) |> # Arrange for consistent stacking
   mutate(Cumulative = cumsum(Proportion) - Proportion / 2) # Position for labels
 
 # Step 4: Create stacked bar chart with proportion labels
@@ -64,47 +71,33 @@ numeric_data <- data[sapply(data, is.numeric)]
 # Compute correlations
 cor_matrix <- cor(numeric_data, use = "complete.obs")
 
-# Plot heatmap
-corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
+long_data <- data |>
+  select(all_of(c("INDFMPIR", "depressed", ordinal_vars, nominal_vars))) |>
+  pivot_longer(cols = all_of(c("depressed", ordinal_vars, nominal_vars)), names_to = "Category_Variable", values_to = "Group")
 
-# 3. Distribution of Numeric Variables
-# Example: Histogram for a single numeric variable (e.g., BMXBMI)
-ggplot(data, aes(x = BMXBMI)) +
-  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
-  labs(title = "Histogram of BMXBMI", x = "BMXBMI", y = "Frequency") +
-  theme_minimal()
-
+# Step 2: Create the facet grid plot
+ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
+  geom_violin(alpha = 1, color = "black") +
+  facet_wrap(Category_Variable ~ .) +  # Creates a grid with rows for each categorical variable
+  labs(
+    title = "Continuous Variable Across Categorical Groups",
+    x = "Groups",
+    y = "Continuous Variable"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Pastel1")
 ```
 
 # LASSO Regression
 
 
 ```{r}
-# 加载必要的包
-library(tidyverse)
-library(glmnet)
-
-# 读取数据
-data <- read.csv("data.csv")
-
-# 手动分类变量
-nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
-                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
-ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
-                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
-continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
-
-# 转换无序分类变量为因子型
 data <- data %>%
-  mutate(across(all_of(nominal_vars), as.factor))
+  mutate(across(all_of(nominal_vars), as.factor),
+         across(all_of(ordinal_vars), ~ as.numeric(.)))
 
-# 保留有序分类变量为数值型
-data <- data %>%
-  mutate(across(all_of(ordinal_vars), ~ as.numeric(.)))
-
-# 分离连续变量
 X_continuous <- data %>% select(all_of(continuous_vars))
-
 # 对连续变量标准化
 X_continuous_scaled <- scale(X_continuous)
 

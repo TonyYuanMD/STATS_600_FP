@@ -29,7 +29,7 @@ continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD9
 # Negate to select factor variables (columns NOT in non_factor_vars)
 data <- data |>
   select(- SEQN) |>
-  mutate(across(!all_of(continuous_vars), as.factor))
+  mutate(across(!all_of(c(continuous_vars, nominal_vars)), as.factor))
 ```
 
 ```{r EDA, echo=FALSE}
@@ -70,6 +70,7 @@ numeric_data <- data[sapply(data, is.numeric)]
 
 # Compute correlations
 cor_matrix <- cor(numeric_data, use = "complete.obs")
+corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
 
 long_data <- data |>
   select(all_of(c("INDFMPIR", "depressed", ordinal_vars, nominal_vars))) |>

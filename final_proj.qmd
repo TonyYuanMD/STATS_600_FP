@@ -13,6 +13,9 @@ library(reshape2)
 library(corrplot)
 library(inspectdf)
 library(glmnet)
+library(effects)
+library(caret)
+library(pROC)
 ```
 
 # Exploratory Data Analysis
@@ -29,7 +32,7 @@ continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD9
 # Negate to select factor variables (columns NOT in non_factor_vars)
 data <- data |>
   select(- SEQN) |>
-  mutate(across(!all_of(c(continuous_vars, nominal_vars)), as.factor))
+  mutate(across(!all_of(c(continuous_vars)), as.factor))
 ```
 
 ```{r EDA, echo=FALSE}
@@ -63,6 +66,9 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
+Notice that $ALQ111$, as a factor variable, has only one level, so it may cause 
+problems when fitting models.
+
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
 # Select numeric columns
@@ -88,6 +94,36 @@ ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   scale_fill_brewer(palette = "Pastel1")
+```
+
+# Logistic Regression
+
+```{r lr, echo=FALSE}
+set.seed(1)
+# Data splitting using stratified sampling
+train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# 
+vanilla_lr <- glm(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(train_data$depressed == 1, 10, 1)
+)
+
+summary(vanilla_lr)
+
+predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, 1, 0))
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(predicted_prob, as.numeric(test_data$depressed))
+plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
 ```
 
 # LASSO Regression
@@ -147,6 +183,41 @@ selected_features %>%
 ```
 
 
+# Mixed Effects Model
 
+```{r strat samp, echo=FALSE}
+train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+```
 
+```{r rand eff, echo=FALSE}
+# Fit the random effects model
+model <- glmer(
+  # depressed ~ DMDMARTZ + (DMDMARTZ | RIDRETH1),
+  # depressed ~ DMDMARTZ + (1 | RIDRETH1),
+  depressed ~ DMDMARTZ + (1 + DMDMARTZ | RIDRETH1),
+  data = data,
+  family = binomial(link = "logit"),
+  weights = ifelse(data$depressed == 1, 10, 1)
+)
+
+# Model summary
+summary(model)
+
+# Get predicted effects
+pred <- as.data.frame(Effect(c("DMDMARTZ", "RIDRETH1"), model))
+
+# Plot
+ggplot(pred, aes(x = DMDMARTZ, y = fit, group = RIDRETH1, color = RIDRETH1)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Predicted Depression by Marital Status and Race",
+    x = "Marital Status",
+    y = "Predicted Probability of Depression"
+  ) +
+  theme_minimal()
+
+```
 

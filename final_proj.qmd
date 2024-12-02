@@ -120,7 +120,8 @@ predicted_classes <- as.factor(ifelse(predicted_prob > .5, 1, 0))
 
 confusionMatrix(predicted_classes, test_data$depressed)
 
-roc_curve <- roc(predicted_prob, as.numeric(test_data$depressed))
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
 plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)

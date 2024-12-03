@@ -101,6 +101,13 @@ ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
 ```{r lr, echo=FALSE}
 set.seed(1)
 # Data splitting using stratified sampling
+data <- read.csv("data.csv")
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor),
+         depressed = recode(depressed, "0" = "No", "1" = "Yes"))
+
 train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
 train_data <- data[train_index, ]
 test_data <- data[-train_index, ]
@@ -110,14 +117,14 @@ vanilla_lr <- glm(
   depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + MCQ092,
   data = train_data,
   family = binomial(link = "logit"),
-  weights = ifelse(train_data$depressed == 1, 10, 1)
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
 )
 
 summary(vanilla_lr)
 
 # Metrics
 predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
-predicted_classes <- as.factor(ifelse(predicted_prob > .5, 1, 0))
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
 
 confusionMatrix(predicted_classes, test_data$depressed)
 
@@ -134,13 +141,7 @@ cv_control_stratified <- trainControl(
   number = 5,             # Number of folds
   classProbs = TRUE,      # For metrics like AUC
   summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
-  sampling = "up"         # Upsample the minority class for balanced folds
-)
-
-train_data$depressed <- factor(
-  train_data$depressed,
-  levels = c(0, 1),  # Original levels
-  labels = c("No", "Yes")  # New valid levels
+  sampling = NULL         # Upsample the minority class for balanced folds
 )
 
 # Train logistic regression model with stratified sampling
@@ -153,12 +154,25 @@ lr_cv <- train(
   method = "glm",        # Specify plain logistic regression
   family = binomial,     # Logistic regression
   metric = "ROC",        # Use AUC as the metric
-  trControl = cv_control_stratified # Cross-validation settings with sampling
+  trControl = cv_control_stratified, # Cross-validation settings with sampling
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
 )
 
 # Print results
 print(lr_cv)
 summary(lr_cv)
+
+# Metrics
+predicted_prob <- predict(lr_cv, test_data, type = "prob")
+predicted_classes <- predict(lr_cv, test_data, type = "raw")
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(test_data$depressed, predicted_prob$Yes)
+print(roc_curve)
+plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
 ```
 
 # LASSO Regression

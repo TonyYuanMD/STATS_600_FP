@@ -115,6 +115,7 @@ vanilla_lr <- glm(
 
 summary(vanilla_lr)
 
+# Metrics
 predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
 predicted_classes <- as.factor(ifelse(predicted_prob > .5, 1, 0))
 
@@ -125,6 +126,39 @@ print(roc_curve)
 plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)
+```
+
+```{r lr cv, echo=FALSE}
+cv_control_stratified <- trainControl(
+  method = "cv",          # Cross-validation
+  number = 5,             # Number of folds
+  classProbs = TRUE,      # For metrics like AUC
+  summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
+  sampling = "up"         # Upsample the minority class for balanced folds
+)
+
+train_data$depressed <- factor(
+  train_data$depressed,
+  levels = c(0, 1),  # Original levels
+  labels = c("No", "Yes")  # New valid levels
+)
+
+# Train logistic regression model with stratified sampling
+lr_cv <- train(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + 
+    DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + 
+    BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + 
+    MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  method = "glm",        # Specify plain logistic regression
+  family = binomial,     # Logistic regression
+  metric = "ROC",        # Use AUC as the metric
+  trControl = cv_control_stratified # Cross-validation settings with sampling
+)
+
+# Print results
+print(lr_cv)
+summary(lr_cv)
 ```
 
 # LASSO Regression

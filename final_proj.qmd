@@ -201,44 +201,89 @@ bss_lr <- bestglm(train_data[- "ALQ111"], family = binomial)
 
 # LASSO Regression
 
+```{r, warning = F}
+# Load the packages we need.
+library(tidyverse)
+library(glmnet)
+library(conflicted)
 
-```{r}
+# Set conflict functions to require explicit calls.
+conflict_prefer("filter", "dplyr", quiet = T)
+conflict_prefer("lag", "dplyr", quiet = T)
+
+# Load the data.
+data <- read.csv("data.csv")
+
+# Categorizes variables.
+nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
+                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
+ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
+                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
+continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
+
+# Convert unordered variables to factor type.
 data <- data %>%
   mutate(across(all_of(nominal_vars), as.factor),
          across(all_of(ordinal_vars), ~ as.numeric(.)))
 
+# Keep ordered categorical variables as numeric type.
+data <- data %>%
+  mutate(across(all_of(ordinal_vars), ~ as.numeric(.)))
+
+# Separate continuous vaiables.
 X_continuous <- data %>% select(all_of(continuous_vars))
-# 对连续变量标准化
+
+# Standardize continuous variables.
+X_continuous <- data %>% select(all_of(continuous_vars))
 X_continuous_scaled <- scale(X_continuous)
 
-# 对无序分类变量进行哑变量编码
+# Perform dummy variables encoding for unordered factor variables.
 X_nominal_encoded <- model.matrix(~ . - 1, data = data %>% select(all_of(nominal_vars)))
 
-# 合并连续变量、有序分类变量、哑变量
+# Convert ordered categorical variables to factors and set levels.
+data <- data %>%
+  mutate(across(all_of(ordinal_vars), ~ as.ordered(.x)))
+
+# Combine continuous variables, ordered categorical variables and dummy variables.
 X_processed <- cbind(X_continuous_scaled, data %>% select(all_of(ordinal_vars)), X_nominal_encoded)
 
-# 将 X_processed 转换为标准矩阵
+# Convert X_processed into a standard matrix.
 X_processed <- as.matrix(X_processed)
 
-# 确保矩阵中的数据都是数值类型
+# Ensure all data in the matrix is of numeric type.
 X_processed <- apply(X_processed, 2, as.numeric)
 
-# 提取因变量
+# Extract the dependent variable.
 y <- data$depressed
 
-# 使用 LASSO 进行建模
-lasso_model <- cv.glmnet(X_processed, y, alpha = 1, family = "binomial")
+# Apply the LASSO.
+lasso_model <- glmnet(X_processed, y,
+                family = 'binomial', 
+                intercept = FALSE, alpha = 1)
 
+# Extract coefficient paths from the LASSO model.
+lasso_coefs <- as.matrix(lasso_model$beta)
+lambda_vals <- lasso_model$lambda
 
-# 提取非零系数的变量
-coef_matrix <- coef(lasso_model, s = "lambda.min")
-selected_features <- as.data.frame(as.matrix(coef_matrix)) %>%
-  rownames_to_column(var = "Variable") %>%
-  filter(s1 != 0) %>%
-  rename(Coefficient = s1) %>%
-  arrange(desc(Coefficient))
+# Convert the coefficient matrix to a long format for ggplot.
+lasso_df <- as.data.frame(t(lasso_coefs)) %>%
+  mutate(log_lambda = log(lambda_vals)) %>%
+  pivot_longer(cols = -log_lambda, names_to = "variable", values_to = "coefficient")
 
-# 可视化
+# Plot LASSO paths using ggplot.
+ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = rainbow(length(unique(lasso_df$variable)))) +  
+  labs(
+    title = "LASSO Regularization Paths",
+    x = "Log(Lambda)",
+    y = "Coefficients"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none") 
+
+# Visualization.
 selected_features %>%
   filter(Variable != "(Intercept)") %>%
   ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
@@ -252,8 +297,46 @@ selected_features %>%
   ) +
   theme_minimal()
 
+#summary(lasso_model)
 
+# Run cross-validation with select lambda.
+mod_cv <- cv.glmnet(x=X_processed, y=y, family="binomial", # Default:nfolds = 10
+                    intercept = F, alpha=1)
+
+plot(mod_cv) 
+
+# Extract the best lambda value from cross-validation results.
+best_lambda <- mod_cv$lambda.min
+
+# Retrieve the coefficients of the model corresponding to the best lambda.
+best_model_coef <- coef(mod_cv, s = best_lambda)
+
+# Convert sparse matrix to a regular dataframe and filter out zero coefficients.
+selected_features <- as.data.frame(as.matrix(best_model_coef))
+selected_features <- selected_features %>%
+  rownames_to_column(var = "Variable") %>%
+  filter(s1 != 0) %>%
+  rename(Coefficient = s1)
+
+# Print the selected variables and their coefficients.
+print(selected_features)
+
+library(pROC)
+
+# Predict the probabilities of the positive class using the model and best lambda.
+predicted_prob <- predict(mod_cv, newx = X_processed, s = best_lambda, type = "response")
+
+# Calculate the ROC curve for the predicted probabilities and the true labels.
+roc_curve <- roc(y, predicted_prob, direction = "<")
+
+# Extract and print the Area Under the Curve (AUC) value.
+auc_value <- auc(roc_curve)  
+print(paste("AUC:", auc_value))
+
+# Plot the ROC curve with the calculated AUC value in the title.
+plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
 ```
+
 
 
 # Mixed Effects Model

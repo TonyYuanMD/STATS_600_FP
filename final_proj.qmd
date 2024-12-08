@@ -66,8 +66,7 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
-Notice that $ALQ111$, as a factor variable, has only one level, so it may cause 
-problems when fitting models.
+Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
 
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
@@ -177,15 +176,17 @@ print(auc_value)
 
 # LASSO Regression
 
-```{r, warning = F}
+If we convert unordered variables to factor type and keep ordered categorical variables as numeric type, the output of applying LASSO follows.
+
+```{r, warning = FALSE, message = FALSE}
 # Load the packages we need.
 library(tidyverse)
 library(glmnet)
 library(conflicted)
 
 # Set conflict functions to require explicit calls.
-conflict_prefer("filter", "dplyr", quiet = T)
-conflict_prefer("lag", "dplyr", quiet = T)
+conflict_prefer("filter", "dplyr", quiet = TRUE)
+conflict_prefer("lag", "dplyr", quiet = TRUE)
 
 # Load the data.
 data <- read.csv("data.csv")
@@ -263,9 +264,9 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
 selected_features %>%
   filter(Variable != "(Intercept)") %>%
   ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
   coord_flip() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
   labs(
     title = "LASSO Selected Variables and Coefficients",
     x = "Variable",
@@ -276,13 +277,44 @@ selected_features %>%
 #summary(lasso_model)
 
 # Run cross-validation with select lambda.
-mod_cv <- cv.glmnet(x=X_processed, y=y, family="binomial", # Default:nfolds = 10
+mod_cv <- cv.glmnet(x=X_processed, y=y, family="binomial", # Default: nfolds = 10
                     intercept = F, alpha=1)
 
-plot(mod_cv) 
+# Extract cross-validation data.
+cv_data <- data.frame(
+  lambda = mod_cv$lambda,          # Lambda values used in cross-validation
+  mean_cv_error = mod_cv$cvm,      # Mean cross-validation error for each lambda
+  upper_error = mod_cv$cvup,       # Upper bound of the cross-validation error
+  lower_error = mod_cv$cvlo        # Lower bound of the cross-validation error
+)
 
-# Extract the best lambda value from cross-validation results.
-best_lambda <- mod_cv$lambda.min
+# Identify the best lambda values.
+best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
+best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
+
+# Plot the cross-validation curve using ggplot2.
+library(ggplot2)
+
+ggplot(cv_data, aes(x = log(lambda), y = mean_cv_error)) +
+  geom_line(size = 1, color = "#4E73E3") +  # Plot the mean cross-validation error curve
+  geom_ribbon(aes(ymin = lower_error, ymax = upper_error), fill = "#4E73E3", alpha = 0.2) +  # Add the error interval
+  geom_vline(xintercept = log(best_lambda_min), linetype = "dashed", color = "#DB6565", size = 1) +  # Highlight lambda.min with a red dashed line
+  geom_vline(xintercept = log(best_lambda_1se), linetype = "dashed", color = "#DB6565", size = 1) +  # Highlight lambda.1se with a green dashed line
+  annotate("text", x = log(best_lambda_min), y = max(cv_data$mean_cv_error), 
+           label = "Min Lambda", color = "#DB6565", vjust = -0.5, size = 4) +  # Add text label for lambda.min
+  annotate("text", x = log(best_lambda_1se), y = max(cv_data$mean_cv_error), 
+           label = "1-SE Lambda", color = "#DB6565", vjust = -0.5, size = 4) +  # Add text label for lambda.1se
+  labs(
+    title = "Cross-Validation Curve for LASSO",    # Title of the plot
+    x = "Log(Lambda)",                             # X-axis label
+    y = "Mean Cross-Validation Error"             # Y-axis label
+  ) +
+  theme_minimal() +                                # Use a minimal theme for the plot
+  theme(plot.title = element_text(hjust = 0.5))    # Center-align the title
+
+
+# Select best_lambda_min as best_lambda.
+best_lambda <- best_lambda_min
 
 # Retrieve the coefficients of the model corresponding to the best lambda.
 best_model_coef <- coef(mod_cv, s = best_lambda)
@@ -307,13 +339,36 @@ roc_curve <- roc(y, predicted_prob, direction = "<")
 
 # Extract and print the Area Under the Curve (AUC) value.
 auc_value <- auc(roc_curve)  
-print(paste("AUC:", auc_value))
+#print(paste("AUC:", auc_value))
 
-# Plot the ROC curve with the calculated AUC value in the title.
-plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
+library(ggplot2)
+library(dplyr)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
 ```
-
-
 
 # Mixed Effects Model
 
@@ -352,4 +407,3 @@ ggplot(pred, aes(x = DMDMARTZ, y = fit, group = RIDRETH1, color = RIDRETH1)) +
   theme_minimal()
 
 ```
-

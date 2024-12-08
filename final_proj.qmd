@@ -16,6 +16,8 @@ library(glmnet)
 library(effects)
 library(caret)
 library(pROC)
+library(leaps)
+library(bestglm)
 ```
 
 # Exploratory Data Analysis
@@ -66,8 +68,7 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
-Notice that $ALQ111$, as a factor variable, has only one level, so it may cause 
-problems when fitting models.
+From the plot above we can see that the problem of imbalanced data exists, as the proportion of depressed cases is much lower than that of its counterpart. To address this problem we propose several approaches: firstly, we use stratified sampling instead of random data splitting; secondly, we assigned higher weights to the depressed cases in training. Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
 
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
@@ -98,6 +99,11 @@ ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
 
 # Logistic Regression
 
+## Prediction
+
+Here we fit the vanilla logistic regression model using all the variables naively, except the $ALQ111$.
+
+
 ```{r lr, echo=FALSE}
 set.seed(1)
 # Data splitting using stratified sampling
@@ -108,11 +114,14 @@ data <- data |>
   mutate(across(!all_of(c(continuous_vars)), as.factor),
          depressed = recode(depressed, "0" = "No", "1" = "Yes"))
 
-train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
+train_index <- createDataPartition(data$depressed, p = 0.6, list = FALSE)
 train_data <- data[train_index, ]
-test_data <- data[-train_index, ]
+remaining_data <- data[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
 
-# 
+# Build vanilla logistic regression model
 vanilla_lr <- glm(
   depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + MCQ092,
   data = train_data,
@@ -135,10 +144,13 @@ auc_value <- auc(roc_curve)
 print(auc_value)
 ```
 
+The above is fitted with only one fold of training data, so here we try a 5-fold
+cross validation on the logistic regression.
+
 ```{r lr cv, echo=FALSE}
 cv_control_stratified <- trainControl(
   method = "cv",          # Cross-validation
-  number = 5,             # Number of folds
+  number = 10,             # Number of folds
   classProbs = TRUE,      # For metrics like AUC
   summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
   sampling = NULL         # Upsample the minority class for balanced folds
@@ -173,6 +185,18 @@ print(roc_curve)
 plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)
+```
+
+## Inference
+
+In the last section, we used all the random variables, trying to improve the prediction ability of the model. Here we want to check if the selected variables will be different using best subset selection (BSS), and draw inference from the results.
+
+```{r lr bss, echo=FALSE}
+bss_lr <- bestglm(train_data[- "ALQ111"], family = binomial)
+```
+
+```{r }
+
 ```
 
 # LASSO Regression

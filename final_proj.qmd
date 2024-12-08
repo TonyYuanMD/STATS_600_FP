@@ -189,10 +189,10 @@ print(auc_value)
 
 ## Inference
 
-In the last section, we used all the random variables, trying to improve the prediction ability of the model. Here we want to check if the selected variables will be different using best subset selection (BSS), and draw inference from the results.
+In the last section, we used all the random variables, trying to improve the prediction ability of the model. Here we want to check if the selected variables will be different by first inspecting correlations between each variables and the response, and draw inference from the logistic regression fitted on the subset of variables.
 
-```{r lr bss, echo=FALSE}
-bss_lr <- bestglm(train_data[- "ALQ111"], family = binomial)
+```{r lr corr, echo=FALSE}
+
 ```
 
 ```{r }

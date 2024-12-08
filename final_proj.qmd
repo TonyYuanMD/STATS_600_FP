@@ -12,33 +12,43 @@ library(lme4)
 library(reshape2)
 library(corrplot)
 library(inspectdf)
+library(glmnet)
+library(effects)
+library(caret)
+library(pROC)
 ```
 
 # Exploratory Data Analysis
 
 ```{r prep, echo=FALSE}
 data <- read.csv("data.csv")
-non_fac <- c("SEQN", "RIDAGEYR", "INDFMPIR", "BMXBMI", "DBD895", "DBD905", "DBD910")
+# 手动分类变量
+nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
+                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
+ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
+                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
+continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
 
 # Negate to select factor variables (columns NOT in non_factor_vars)
 data <- data |>
-  mutate(across(!all_of(non_fac), as.factor))
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor))
 ```
 
 ```{r EDA, echo=FALSE}
 # Step 2: Reshape data into a long format for ggplot
 # Gather categorical variables into a key-value pair structure
-long_data <- data %>%
-  select(! all_of(non_fac)) %>%
+long_data <- data |>
+  select(! all_of(continuous_vars)) |>
   pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category")
 
 # Step 3: Calculate proportions for each category in each variable
-prop_data <- long_data %>%
-  group_by(Variable, Category) %>%
-  summarise(Count = n(), .groups = "drop") %>%
-  group_by(Variable) %>%
-  mutate(Proportion = Count / sum(Count)) %>%
-  arrange(Variable, desc(Category)) %>% # Arrange for consistent stacking
+prop_data <- long_data |>
+  group_by(Variable, Category) |>
+  summarise(Count = n(), .groups = "drop") |>
+  group_by(Variable) |>
+  mutate(Proportion = Count / sum(Count)) |>
+  arrange(Variable, desc(Category)) |> # Arrange for consistent stacking
   mutate(Cumulative = cumsum(Proportion) - Proportion / 2) # Position for labels
 
 # Step 4: Create stacked bar chart with proportion labels
@@ -56,6 +66,9 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
+Notice that $ALQ111$, as a factor variable, has only one level, so it may cause 
+problems when fitting models.
+
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
 # Select numeric columns
@@ -63,22 +76,108 @@ numeric_data <- data[sapply(data, is.numeric)]
 
 # Compute correlations
 cor_matrix <- cor(numeric_data, use = "complete.obs")
-
-# Plot heatmap
 corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
 
-# 3. Distribution of Numeric Variables
-# Example: Histogram for a single numeric variable (e.g., BMXBMI)
-ggplot(data, aes(x = BMXBMI)) +
-  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
-  labs(title = "Histogram of BMXBMI", x = "BMXBMI", y = "Frequency") +
-  theme_minimal()
+long_data <- data |>
+  select(all_of(c("INDFMPIR", "depressed", ordinal_vars, nominal_vars))) |>
+  pivot_longer(cols = all_of(c("depressed", ordinal_vars, nominal_vars)), names_to = "Category_Variable", values_to = "Group")
 
+# Step 2: Create the facet grid plot
+ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
+  geom_violin(alpha = 1, color = "black") +
+  facet_wrap(Category_Variable ~ .) +  # Creates a grid with rows for each categorical variable
+  labs(
+    title = "Continuous Variable Across Categorical Groups",
+    x = "Groups",
+    y = "Continuous Variable"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+# Logistic Regression
+
+```{r lr, echo=FALSE}
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor),
+         depressed = recode(depressed, "0" = "No", "1" = "Yes"))
+
+train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# 
+vanilla_lr <- glm(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+)
+
+summary(vanilla_lr)
+
+# Metrics
+predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
+```
+
+```{r lr cv, echo=FALSE}
+cv_control_stratified <- trainControl(
+  method = "cv",          # Cross-validation
+  number = 5,             # Number of folds
+  classProbs = TRUE,      # For metrics like AUC
+  summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
+  sampling = NULL         # Upsample the minority class for balanced folds
+)
+
+# Train logistic regression model with stratified sampling
+lr_cv <- train(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + 
+    DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + 
+    BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + 
+    MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  method = "glm",        # Specify plain logistic regression
+  family = binomial,     # Logistic regression
+  metric = "ROC",        # Use AUC as the metric
+  trControl = cv_control_stratified, # Cross-validation settings with sampling
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+)
+
+# Print results
+print(lr_cv)
+summary(lr_cv)
+
+# Metrics
+predicted_prob <- predict(lr_cv, test_data, type = "prob")
+predicted_classes <- predict(lr_cv, test_data, type = "raw")
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(test_data$depressed, predicted_prob$Yes)
+print(roc_curve)
+plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
 ```
 
 # LASSO Regression
 
-```{r}
+```{r, warning = F}
 # Load the packages we need.
 library(tidyverse)
 library(glmnet)
@@ -100,7 +199,8 @@ continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD9
 
 # Convert unordered variables to factor type.
 data <- data %>%
-  mutate(across(all_of(nominal_vars), as.factor))
+  mutate(across(all_of(nominal_vars), as.factor),
+         across(all_of(ordinal_vars), ~ as.numeric(.)))
 
 # Keep ordered categorical variables as numeric type.
 data <- data %>%
@@ -110,6 +210,7 @@ data <- data %>%
 X_continuous <- data %>% select(all_of(continuous_vars))
 
 # Standardize continuous variables.
+X_continuous <- data %>% select(all_of(continuous_vars))
 X_continuous_scaled <- scale(X_continuous)
 
 # Perform dummy variables encoding for unordered factor variables.
@@ -211,3 +312,44 @@ print(paste("AUC:", auc_value))
 # Plot the ROC curve with the calculated AUC value in the title.
 plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
 ```
+
+
+
+# Mixed Effects Model
+
+```{r strat samp, echo=FALSE}
+train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+```
+
+```{r rand eff, echo=FALSE}
+# Fit the random effects model
+model <- glmer(
+  # depressed ~ DMDMARTZ + (DMDMARTZ | RIDRETH1),
+  # depressed ~ DMDMARTZ + (1 | RIDRETH1),
+  depressed ~ DMDMARTZ + (1 + DMDMARTZ | RIDRETH1),
+  data = data,
+  family = binomial(link = "logit"),
+  weights = ifelse(data$depressed == 1, 10, 1)
+)
+
+# Model summary
+summary(model)
+
+# Get predicted effects
+pred <- as.data.frame(Effect(c("DMDMARTZ", "RIDRETH1"), model))
+
+# Plot
+ggplot(pred, aes(x = DMDMARTZ, y = fit, group = RIDRETH1, color = RIDRETH1)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Predicted Depression by Marital Status and Race",
+    x = "Marital Status",
+    y = "Predicted Probability of Depression"
+  ) +
+  theme_minimal()
+
+```
+

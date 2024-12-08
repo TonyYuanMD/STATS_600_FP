@@ -85,8 +85,8 @@ library(glmnet)
 library(conflicted)
 
 # Set conflict functions to require explicit calls.
-conflict_prefer("filter", "dplyr")
-conflict_prefer("lag", "dplyr")
+conflict_prefer("filter", "dplyr", quiet = T)
+conflict_prefer("lag", "dplyr", quiet = T)
 
 # Load the data.
 data <- read.csv("data.csv")
@@ -131,7 +131,6 @@ X_processed <- apply(X_processed, 2, as.numeric)
 # Extract the dependent variable.
 y <- data$depressed
 
-
 # Apply the LASSO.
 lasso_model <- glmnet(X_processed, y,
                 family = 'binomial', 
@@ -146,12 +145,6 @@ lasso_df <- as.data.frame(t(lasso_coefs)) %>%
   mutate(log_lambda = log(lambda_vals)) %>%
   pivot_longer(cols = -log_lambda, names_to = "variable", values_to = "coefficient")
 
-library(scales)  # For muted color palettes
-
-# Generate a muted color palette
-num_variables <- length(unique(lasso_df$variable))
-muted_colors <- muted(hue_pal()(num_variables))
-
 # Plot LASSO paths using ggplot.
 ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   geom_line(size = 1) +
@@ -164,8 +157,6 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5),
         legend.position = "none") 
-
-
 
 # Visualization.
 selected_features %>%
@@ -183,23 +174,40 @@ selected_features %>%
 
 #summary(lasso_model)
 
-
 # Run cross-validation with select lambda.
 mod_cv <- cv.glmnet(x=X_processed, y=y, family="binomial", # Default:nfolds = 10
                     intercept = F, alpha=1)
 
 plot(mod_cv) 
 
+# Extract the best lambda value from cross-validation results.
+best_lambda <- mod_cv$lambda.min
 
+# Retrieve the coefficients of the model corresponding to the best lambda.
+best_model_coef <- coef(mod_cv, s = best_lambda)
 
+# Convert sparse matrix to a regular dataframe and filter out zero coefficients.
+selected_features <- as.data.frame(as.matrix(best_model_coef))
+selected_features <- selected_features %>%
+  rownames_to_column(var = "Variable") %>%
+  filter(s1 != 0) %>%
+  rename(Coefficient = s1)
 
+# Print the selected variables and their coefficients.
+print(selected_features)
 
+library(pROC)
 
+# Predict the probabilities of the positive class using the model and best lambda.
+predicted_prob <- predict(mod_cv, newx = X_processed, s = best_lambda, type = "response")
 
+# Calculate the ROC curve for the predicted probabilities and the true labels.
+roc_curve <- roc(y, predicted_prob, direction = "<")
 
+# Extract and print the Area Under the Curve (AUC) value.
+auc_value <- auc(roc_curve)  
+print(paste("AUC:", auc_value))
 
-```
-
-```{r}
-
+# Plot the ROC curve with the calculated AUC value in the title.
+plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
 ```

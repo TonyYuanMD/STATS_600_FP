@@ -18,6 +18,7 @@ library(caret)
 library(pROC)
 library(leaps)
 library(bestglm)
+library(emmeans)
 ```
 
 # Exploratory Data Analysis
@@ -400,23 +401,6 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
         legend.position = "none") 
 ```
 
-```{r}
-# Visualization.
-selected_features %>%
-  filter(Variable != "(Intercept)") %>%
-  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity", fill = "#4E73E3") +
-  coord_flip() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
-  labs(
-    title = "LASSO Selected Variables and Coefficients",
-    x = "Variable",
-    y = "Coefficient"
-  ) +
-  theme_minimal()
-
-#summary(lasso_model)
-```
 
 
 ```{r}
@@ -473,7 +457,7 @@ selected_features <- as.data.frame(as.matrix(best_model_coef))
 selected_features <- selected_features %>%
   rownames_to_column(var = "Variable") %>%
   filter(s1 != 0) %>%
-  rename(Coefficient = s1)m
+  rename(Coefficient = s1)
 
 # Print the selected variables and their coefficients.
 print(selected_features)
@@ -485,6 +469,24 @@ library(selectiveInference)
 #post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
 #print(post_fit)
 
+```
+
+```{r}
+# Visualization.
+selected_features %>%
+  filter(Variable != "(Intercept)") %>%
+  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  labs(
+    title = "LASSO Selected Variables and Coefficients",
+    x = "Variable",
+    y = "Coefficient"
+  ) +
+  theme_minimal()
+
+#summary(lasso_model)
 ```
 
 ```{r}
@@ -602,7 +604,7 @@ auc_value <- auc(roc_curve)
 
 # Mixed Effects Model
 
-
+!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!!
 ## Prediction
 
 ```{r mix eff, echo=FALSE}
@@ -636,14 +638,22 @@ plot(allEffects(me))
 
 ```{r me interaction, echo=FALSE}
 # Fit the random effects model
+me <- glmer(
+  depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + (1 | RIDRETH1 / DMDMARTZ) + (1 | DMDBORN4) + (1 | RIAGENDR),
+  data = inference_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
 me_int <- glmer(
   depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + RIDRETH1 * DMDMARTZ + (1 | DMDBORN4) + (1 | RIAGENDR),
-  data = train_data,
+  data = inference_data,
   family = binomial(link = "logit"),
-  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
 )
 
 anova(me, me_int)
+
 emmeans_results <- emmeans(me_interaction, ~ DMDMARTZ | RIDRETH1)
 plot(emmeans_results, comparisons = TRUE)
 ```

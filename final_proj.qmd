@@ -473,7 +473,7 @@ selected_features <- as.data.frame(as.matrix(best_model_coef))
 selected_features <- selected_features %>%
   rownames_to_column(var = "Variable") %>%
   filter(s1 != 0) %>%
-  rename(Coefficient = s1)
+  rename(Coefficient = s1)m
 
 # Print the selected variables and their coefficients.
 print(selected_features)
@@ -506,10 +506,12 @@ dummy_mapping <- data.frame(
   })
 )
 
+
+cont_ord_vars <-  c(continuous_vars, ordinal_vars)
 # Add continuous variables directly
 continuous_mapping <- data.frame(
-  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% continuous_vars],
-  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% continuous_vars]
+  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars],
+  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars]
 )
 
 # Combine mappings for dummy variables and continuous variables
@@ -521,9 +523,6 @@ selected_vars_sheet <- rbind(
 
 # Print the final mapping
 selected_original_vars <- selected_vars_sheet$OriginalVariable
-
-#Note that we forget ALQ151, ALQ121. Compared with the selected features above.
-selected_original_vars <- c(selected_original_vars, "ALQ121", "ALQ151")
 
 #Print the selected original variables.
 print(selected_original_vars)

@@ -638,7 +638,7 @@ plot(allEffects(me))
 ```{r me interaction, echo=FALSE}
 # Fit the random effects model
 me_int <- glmer(
-  depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + RIDRETH1 * DMDMARTZ + (1 | RIDRETH1 / DMDMARTZ) + (1 | DMDBORN4) + (1 | RIAGENDR),
+  depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + RIDRETH1 * DMDMARTZ + (1 | DMDBORN4) + (1 | RIAGENDR),
   data = train_data,
   family = binomial(link = "logit"),
   weights = ifelse(train_data$depressed == "Yes", 10, 1)

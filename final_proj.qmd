@@ -325,6 +325,8 @@ ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151",
                   "BPQ020", "BPQ080", "DBQ700", "DBQ197")
 continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
 
+total_vars <- c(nominal_vars, ordinal_vars, continuous_vars)
+print(total_vars)
 
 set.seed(1)
 # Data splitting using stratified sampling
@@ -437,8 +439,8 @@ cv_data <- data.frame(
 # Identify the best lambda values.
 best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
 best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
-print(best_lambda_1se)
-print(best_lambda_min)
+cat("best_lambda_1se: ", best_lambda_1se, "\n")
+cat("best_lambda_min: ", best_lambda_min, "\n")
 
 
 # Plot the cross-validation curve.
@@ -480,10 +482,54 @@ print(selected_features)
 library(selectiveInference)
 
 # Post selective inference.
-post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
-print(post_fit)
+#post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
+#print(post_fit)
 
 ```
+
+```{r}
+# Extract the dummy variable names from selected_features
+selected_dummy_variables <- selected_features$Variable
+
+# Extract the original factor variable names from nominal_vars
+nominal_variables <- nominal_vars
+
+# Match dummy variable names to their corresponding original factor variable names
+dummy_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables,
+  OriginalVariable = sapply(selected_dummy_variables, function(dummy) {
+    # Identify the original factor variable based on the prefix of the dummy variable name
+    matched_var <- nominal_variables[sapply(nominal_variables, function(nominal_var) {
+      startsWith(dummy, paste0(nominal_var, ""))
+    })]
+    if (length(matched_var) > 0) return(matched_var[1]) else return(NA)
+  })
+)
+
+# Add continuous variables directly
+continuous_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% continuous_vars],
+  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% continuous_vars]
+)
+
+# Combine mappings for dummy variables and continuous variables
+selected_vars_sheet <- rbind(
+  dummy_mapping %>% filter(!is.na(OriginalVariable)),
+  continuous_mapping
+) %>%
+  distinct(OriginalVariable)
+
+# Print the final mapping
+selected_original_vars <- selected_vars_sheet$OriginalVariable
+
+#Note that we forget ALQ151, ALQ121. Compared with the selected features above.
+selected_original_vars <- c(selected_original_vars, "ALQ121", "ALQ151")
+
+#Print the selected original variables.
+print(selected_original_vars)
+
+```
+
 
 ```{r}
 library(pROC)

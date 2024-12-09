@@ -24,7 +24,7 @@ library(bestglm)
 
 ```{r prep, echo=FALSE}
 data <- read.csv("data.csv")
-# 手动分类变量
+# Categorizes variables.
 nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
                   "DIQ010", "MCQ010", "MCQ053", "MCQ092")
 ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
@@ -315,9 +315,8 @@ library(conflicted)
 # Set conflict functions to require explicit calls.
 conflict_prefer("filter", "dplyr", quiet = TRUE)
 conflict_prefer("lag", "dplyr", quiet = TRUE)
+conflict_prefer("select", "dplyr", quiet = TRUE)
 
-# Load the data.
-data <- read.csv("data.csv")
 
 # Categorizes variables.
 nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
@@ -326,28 +325,27 @@ ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151",
                   "BPQ020", "BPQ080", "DBQ700", "DBQ197")
 continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
 
+
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+
 # Convert unordered variables to factor type.
-data <- data %>%
+data <- data |>
+  select(- SEQN) |>
   mutate(across(all_of(nominal_vars), as.factor),
          across(all_of(ordinal_vars), ~ as.numeric(.)))
-
-# Keep ordered categorical variables as numeric type.
-data <- data %>%
-  mutate(across(all_of(ordinal_vars), ~ as.numeric(.)))
+            # depressed = recode(depressed, "0" = "No", "1" = "Yes"
+         
 
 # Separate continuous vaiables.
 X_continuous <- data %>% select(all_of(continuous_vars))
 
 # Standardize continuous variables.
-X_continuous <- data %>% select(all_of(continuous_vars))
 X_continuous_scaled <- scale(X_continuous)
 
 # Perform dummy variables encoding for unordered factor variables.
 X_nominal_encoded <- model.matrix(~ . - 1, data = data %>% select(all_of(nominal_vars)))
-
-# Convert ordered categorical variables to factors and set levels.
-data <- data %>%
-  mutate(across(all_of(ordinal_vars), ~ as.ordered(.x)))
 
 # Combine continuous variables, ordered categorical variables and dummy variables.
 X_processed <- cbind(X_continuous_scaled, data %>% select(all_of(ordinal_vars)), X_nominal_encoded)
@@ -361,10 +359,21 @@ X_processed <- apply(X_processed, 2, as.numeric)
 # Extract the dependent variable.
 y <- data$depressed
 
+# Combine X_processed and y as dataframe.
+data_processed <- as.data.frame(cbind(X_processed, depressed = y))
+
+# Divide the data into three subsets to conduct train, test and inference.
+train_index <- createDataPartition(data_processed$depressed, p = 0.6, list = FALSE)
+train_data <- data_processed[train_index, ]
+remaining_data <- data_processed[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
+
 # Apply the LASSO.
-lasso_model <- glmnet(X_processed, y,
+lasso_model <- glmnet(train_data %>% select(-depressed), train_data$depressed,
                 family = 'binomial', 
-                intercept = FALSE, alpha = 1)
+                intercept = FALSE, alpha = 1, thresh = 1e-7)
 
 # Extract coefficient paths from the LASSO model.
 lasso_coefs <- as.matrix(lasso_model$beta)
@@ -387,7 +396,8 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5),
         legend.position = "none") 
-
+```
+```{r}
 # Visualization.
 selected_features %>%
   filter(Variable != "(Intercept)") %>%
@@ -403,10 +413,17 @@ selected_features %>%
   theme_minimal()
 
 #summary(lasso_model)
+```
 
-# Run cross-validation with select lambda.
-mod_cv <- cv.glmnet(x=X_processed, y=y, family="binomial", # Default: nfolds = 10
-                    intercept = F, alpha=1)
+
+```{r}
+# Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
+## Convert train_data_processed into a standard matrix.
+train_data_processed <- as.matrix(train_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+train_data_processed <- apply(train_data_processed, 2, as.numeric)
+mod_cv <- cv.glmnet(x=train_data_processed, y=train_data$depressed, family="binomial", nfolds = 4, # Default: nfolds = 10
+                    intercept = FALSE, alpha=1, thresh = 1e-7, weights = ifelse(train_data$depressed == 1, 10, 1))
 
 # Extract cross-validation data.
 cv_data <- data.frame(
@@ -419,10 +436,11 @@ cv_data <- data.frame(
 # Identify the best lambda values.
 best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
 best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
+print(best_lambda_1se)
+print(best_lambda_min)
 
-# Plot the cross-validation curve using ggplot2.
-library(ggplot2)
 
+# Plot the cross-validation curve.
 ggplot(cv_data, aes(x = log(lambda), y = mean_cv_error)) +
   geom_line(size = 1, color = "#4E73E3") +  # Plot the mean cross-validation error curve
   geom_ribbon(aes(ymin = lower_error, ymax = upper_error), fill = "#4E73E3", alpha = 0.2) +  # Add the error interval
@@ -457,17 +475,32 @@ selected_features <- selected_features %>%
 # Print the selected variables and their coefficients.
 print(selected_features)
 
+# Load the package we need.
+library(selectiveInference)
+
+# Post selective inference.
+post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
+print(post_fit)
+
+```
+
+```{r}
 library(pROC)
 
 # Predict the probabilities of the positive class using the model and best lambda.
-predicted_prob <- predict(mod_cv, newx = X_processed, s = best_lambda, type = "response")
+## Convert test_data_processed into a standard matrix.
+test_data_processed <- as.matrix(test_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+test_data_processed <- apply(test_data_processed, 2, as.numeric)
+predicted_prob <- predict(mod_cv, newx = test_data_processed, s = best_lambda, type = "response")
+#print(predicted_prob)
 
 # Calculate the ROC curve for the predicted probabilities and the true labels.
-roc_curve <- roc(y, predicted_prob, direction = "<")
+roc_curve <- roc(test_data$depressed, predicted_prob[, 1], direction = "<")
 
 # Extract and print the Area Under the Curve (AUC) value.
 auc_value <- auc(roc_curve)  
-#print(paste("AUC:", auc_value))
+print(paste("AUC:", auc_value))
 
 library(ggplot2)
 library(dplyr)
@@ -495,8 +528,31 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
     axis.title = element_text(size = 14),  # Larger axis titles
     axis.text = element_text(size = 12)    # Larger axis text
   )
+```
+```{r}
+
+# Metrics
+
+# Convert floating-point probabilities into binary classification labels
+predicted_test_data <- ifelse(predicted_prob[, 1] > 0.5, 1, 0)  # Set threshold to 0.5
+
+# Convert to factors
+predicted_test_data <- factor(predicted_test_data, levels = c(0, 1))
+test_actual_y <- factor(test_data$depressed, levels = c(0, 1))
+
+# Compute confusion matrix
+confusion_matrix <- confusionMatrix(predicted_test_data, test_actual_y)
+print(confusion_matrix)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+#print(auc_value)
 
 ```
+
+
 
 # Mixed Effects Model
 

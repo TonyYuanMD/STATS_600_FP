@@ -196,12 +196,12 @@ lr_cv <- train(
 )
 
 # Print results
-print(lr_cv)
-summary(lr_cv)
+print(lr_cv$finalModel)
+summary(lr_cv$finalModel)
 
 # Metrics
 predicted_prob <- predict(lr_cv, test_data, type = "prob")
-predicted_classes <- predict(lr_cv, test_data, type = "raw")
+predicted_classes <- predict(lr_cv, test_data, type = "raw") # take the class with the larger prob.
 
 confusionMatrix(predicted_classes, test_data$depressed)
 
@@ -297,9 +297,9 @@ lr_infer <- train(
 )
 
 # Print results
-print(lr_infer)
-summary(lr_infer)
-
+print(lr_infer$finalModel)
+summary(lr_infer$finalModel)
+confint(lr_infer$finalModel)
 ```
 
 # LASSO Regression
@@ -397,6 +397,7 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   theme(plot.title = element_text(hjust = 0.5),
         legend.position = "none") 
 ```
+
 ```{r}
 # Visualization.
 selected_features %>%
@@ -556,38 +557,34 @@ auc_value <- auc(roc_curve)
 
 # Mixed Effects Model
 
-```{r strat samp, echo=FALSE}
-train_index <- createDataPartition(data$depressed, p = 0.7, list = FALSE)
-train_data <- data[train_index, ]
-test_data <- data[-train_index, ]
-```
 
-```{r rand eff, echo=FALSE}
+## Prediction
+
+```{r mix eff, echo=FALSE}
 # Fit the random effects model
-model <- glmer(
-  # depressed ~ DMDMARTZ + (DMDMARTZ | RIDRETH1),
-  # depressed ~ DMDMARTZ + (1 | RIDRETH1),
-  depressed ~ DMDMARTZ + (1 + DMDMARTZ | RIDRETH1),
-  data = data,
+me <- glmer(
+  depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + (1 | RIDRETH1 / DMDMARTZ) + (1 | DMDBORN4) + (1 | RIAGENDR),
+  data = train_data,
   family = binomial(link = "logit"),
-  weights = ifelse(data$depressed == 1, 10, 1)
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
 )
 
 # Model summary
-summary(model)
+summary(me)
 
 # Get predicted effects
-pred <- as.data.frame(Effect(c("DMDMARTZ", "RIDRETH1"), model))
+predicted_prob <- predict(me, type = "response", newdata = test_data)
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
 
-# Plot
-ggplot(pred, aes(x = DMDMARTZ, y = fit, group = RIDRETH1, color = RIDRETH1)) +
-  geom_line() +
-  geom_point() +
-  labs(
-    title = "Predicted Depression by Marital Status and Race",
-    x = "Marital Status",
-    y = "Predicted Probability of Depression"
-  ) +
-  theme_minimal()
+confusionMatrix(predicted_classes, test_data$depressed)
 
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
+
+plot(allEffects(me))
 ```
+
+## Inference

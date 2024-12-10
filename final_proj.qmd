@@ -570,7 +570,7 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   theme(plot.title = element_text(hjust = 0.5),
         legend.position = "none") 
 ```
-
+Find the best lambda, choose lambda min as the best lambda.
 ```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
@@ -636,6 +636,186 @@ library(selectiveInference)
 # Post selective inference.
 #post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
 #print(post_fit)
+
+```
+
+
+
+```{r}
+# Visualization.
+selected_features %>%
+  filter(Variable != "(Intercept)") %>%
+  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  labs(
+    title = "LASSO Selected Variables and Coefficients",
+    x = "Variable",
+    y = "Coefficient"
+  ) +
+  theme_minimal()+
+  theme(
+    axis.text.y = element_text(size = 10, hjust = 1),  # Adjusts the size and alignment of y-axis labels
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Centers the plot title with bold formatting
+  )
+
+#summary(lasso_model)
+```
+
+```{r}
+# Extract the dummy variable names from selected_features
+selected_dummy_variables <- selected_features$Variable
+
+# Extract the original factor variable names from nominal_vars
+nominal_variables <- nominal_vars
+
+# Match dummy variable names to their corresponding original factor variable names
+dummy_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables,
+  OriginalVariable = sapply(selected_dummy_variables, function(dummy) {
+    # Identify the original factor variable based on the prefix of the dummy variable name
+    matched_var <- nominal_variables[sapply(nominal_variables, function(nominal_var) {
+      startsWith(dummy, paste0(nominal_var, ""))
+    })]
+    if (length(matched_var) > 0) return(matched_var[1]) else return(NA)
+  })
+)
+
+
+cont_ord_vars <-  c(continuous_vars, ordinal_vars)
+# Add continuous variables directly
+continuous_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars],
+  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars]
+)
+
+# Combine mappings for dummy variables and continuous variables
+selected_vars_sheet <- rbind(
+  dummy_mapping %>% filter(!is.na(OriginalVariable)),
+  continuous_mapping
+) %>%
+  distinct(OriginalVariable)
+
+# Print the final mapping
+selected_original_vars <- selected_vars_sheet$OriginalVariable
+
+#Print the selected original variables.
+print(selected_original_vars)
+
+```
+
+```{r}
+library(pROC)
+
+# Predict the probabilities of the positive class using the model and best lambda.
+## Convert test_data_processed into a standard matrix.
+test_data_processed <- as.matrix(test_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+test_data_processed <- apply(test_data_processed, 2, as.numeric)
+predicted_prob <- predict(mod_cv, newx = test_data_processed, s = best_lambda, type = "response")
+#print(predicted_prob)
+
+# Calculate the ROC curve for the predicted probabilities and the true labels.
+roc_curve <- roc(test_data$depressed, predicted_prob[, 1], direction = "<")
+
+# Extract and print the Area Under the Curve (AUC) value.
+auc_value <- auc(roc_curve)  
+print(paste("AUC:", auc_value))
+
+library(ggplot2)
+library(dplyr)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+```
+
+```{r}
+
+# Metrics
+
+# Convert floating-point probabilities into binary classification labels
+predicted_test_data <- ifelse(predicted_prob[, 1] > 0.5, 1, 0)  # Set threshold to 0.5
+
+# Convert to factors
+predicted_test_data <- factor(predicted_test_data, levels = c(0, 1))
+test_actual_y <- factor(test_data$depressed, levels = c(0, 1))
+
+# Compute confusion matrix
+confusion_matrix <- confusionMatrix(predicted_test_data, test_actual_y)
+print(confusion_matrix)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+#print(auc_value)
+
+```
+
+Choose lambda 1se as the best lambda.
+```{r}
+# Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
+## Convert train_data_processed into a standard matrix.
+train_data_processed <- as.matrix(train_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+train_data_processed <- apply(train_data_processed, 2, as.numeric)
+mod_cv <- cv.glmnet(x=train_data_processed, y=train_data$depressed, family="binomial", nfolds = 4, # Default: nfolds = 10
+                    intercept = FALSE, alpha=1, thresh = 1e-7, weights = ifelse(train_data$depressed == 1, 10, 1))
+
+# Extract cross-validation data.
+cv_data <- data.frame(
+  lambda = mod_cv$lambda,          # Lambda values used in cross-validation
+  mean_cv_error = mod_cv$cvm,      # Mean cross-validation error for each lambda
+  upper_error = mod_cv$cvup,       # Upper bound of the cross-validation error
+  lower_error = mod_cv$cvlo        # Lower bound of the cross-validation error
+)
+
+# Identify the best lambda values.
+best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
+best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
+
+
+
+
+
+# Select best_lambda_min as best_lambda.
+best_lambda <- best_lambda_1se
+
+# Retrieve the coefficients of the model corresponding to the best lambda.
+best_model_coef <- coef(mod_cv, s = best_lambda)
+
+# Convert sparse matrix to a regular dataframe and filter out zero coefficients.
+selected_features <- as.data.frame(as.matrix(best_model_coef))
+selected_features <- selected_features %>%
+  rownames_to_column(var = "Variable") %>%
+  filter(s1 != 0) %>%
+  rename(Coefficient = s1)
+
+# Print the selected variables and their coefficients.
+print(selected_features)
+
 
 ```
 

@@ -156,6 +156,38 @@ vanilla_lr <- glm(
 
 summary(vanilla_lr)
 
+# Extract coefficients and visualize them.
+coefficients <- coef(summary(vanilla_lr))
+coef_df <- data.frame(
+  Variable = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std.Error = coefficients[, "Std. Error"]
+)
+
+
+
+coef_df <- coef_df %>%
+  mutate(Significant = ifelse(coefficients[, "Pr(>|z|)"] < 0.05, "Significant", "Not Significant"))
+
+
+ggplot(coef_df, aes(x = reorder(Variable, Estimate), y = Estimate, fill = Significant)) +
+  geom_col(width = 0.9) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  scale_fill_manual(values = c("Significant" = "#4E73E3", "Not Significant" = "#E6E6E6")) +
+  labs(
+    title = "Logistic Regression Coefficients with Significance Highlight",
+    x = "Variable",
+    y = "Estimate",
+    fill = "Significance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 6, hjust = 1)
+  )
+
+
 # Metrics
 predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
 predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
@@ -164,9 +196,35 @@ confusionMatrix(predicted_classes, test_data$depressed)
 
 roc_curve <- roc(test_data$depressed, predicted_prob)
 print(roc_curve)
-plot(roc_curve)
+#plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+
+
 ```
 
 The above is fitted with only one fold of training data, so here we try a 5-fold
@@ -199,17 +257,131 @@ lr_cv <- train(
 print(lr_cv$finalModel)
 summary(lr_cv$finalModel)
 
+# Extract coefficients and visualize them.
+coefficients <- coef(summary(lr_cv$finalModel))
+coef_df <- data.frame(
+  Variable = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std.Error = coefficients[, "Std. Error"]
+)
+
+
+coef_df <- coef_df %>%
+  mutate(Significant = ifelse(coefficients[, "Pr(>|z|)"] < 0.05, "Significant", "Not Significant"))
+
+
+ggplot(coef_df, aes(x = reorder(Variable, Estimate), y = Estimate, fill = Significant)) +
+  geom_col(width = 0.9) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  scale_fill_manual(values = c("Significant" = "#4E73E3", "Not Significant" = "#E6E6E6")) +
+  labs(
+    title = "Logistic Regression Coefficients with Significance Highlight",
+    x = "Variable",
+    y = "Estimate",
+    fill = "Significance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 6, hjust = 1)
+  )
+
+
 # Metrics
 predicted_prob <- predict(lr_cv, test_data, type = "prob")
 predicted_classes <- predict(lr_cv, test_data, type = "raw") # take the class with the larger prob.
 
 confusionMatrix(predicted_classes, test_data$depressed)
 
+# Heatmap of confusion matrix
+conf_matrix <- confusionMatrix(predicted_classes, test_data$depressed)
+conf_matrix_df <- as.data.frame(conf_matrix$table)
+
+ggplot(conf_matrix_df, aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "#FFFFFF", size = 6) +
+  scale_fill_gradient(low = "#6EC0E6", high = "#FF6961") +
+  labs(
+    title = "Confusion Matrix",
+    x = "Predicted",
+    y = "Actual"
+  ) +
+  theme_minimal()+
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
 roc_curve <- roc(test_data$depressed, predicted_prob$Yes)
 print(roc_curve)
-plot(roc_curve)
+#plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+# 添加权重列
+calibration_data <- data.frame(
+  Predicted_Prob = predicted_prob$Yes,  # 模型的预测概率
+  Observed = as.numeric(test_data$depressed == "Yes"),  # 实际标签
+  Weight = ifelse(test_data$depressed == "Yes", 10, 1)  # 测试集中权重
+)
+
+# 分组计算校准指标（引入权重）
+calibration_summary <- calibration_data %>%
+  mutate(Probability_Bin = cut(Predicted_Prob, breaks = seq(0, 1, by = 0.1), include.lowest = TRUE)) %>%
+  group_by(Probability_Bin) %>%
+  summarise(
+    Mean_Predicted_Prob = weighted.mean(Predicted_Prob, Weight),  # 加权平均预测概率
+    Observed_Proportion = weighted.mean(Observed, Weight)         # 加权观测比例
+  )
+
+
+# 绘制校准曲线
+ggplot(calibration_summary, aes(x = Mean_Predicted_Prob, y = Observed_Proportion)) +
+  geom_point(size = 3, color = "#4E73E3") +
+  geom_line(color = "#4E73E3", size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(
+    title = "Calibration Curve (Weighted)",
+    x = "Mean Predicted Probability",
+    y = "Observed Proportion"
+  ) +
+  xlim(0,1) +
+  ylim(0,1) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+
+
 ```
 
 ## Inference
@@ -401,25 +573,6 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
 ```
 
 ```{r}
-# Visualization.
-selected_features %>%
-  filter(Variable != "(Intercept)") %>%
-  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity", fill = "#4E73E3") +
-  coord_flip() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
-  labs(
-    title = "LASSO Selected Variables and Coefficients",
-    x = "Variable",
-    y = "Coefficient"
-  ) +
-  theme_minimal()
-
-#summary(lasso_model)
-```
-
-
-```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
 train_data_processed <- as.matrix(train_data %>% select(-depressed))
@@ -473,7 +626,7 @@ selected_features <- as.data.frame(as.matrix(best_model_coef))
 selected_features <- selected_features %>%
   rownames_to_column(var = "Variable") %>%
   filter(s1 != 0) %>%
-  rename(Coefficient = s1)m
+  rename(Coefficient = s1)
 
 # Print the selected variables and their coefficients.
 print(selected_features)
@@ -486,6 +639,29 @@ library(selectiveInference)
 #print(post_fit)
 
 ```
+
+```{r}
+# Visualization.
+selected_features %>%
+  filter(Variable != "(Intercept)") %>%
+  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  labs(
+    title = "LASSO Selected Variables and Coefficients",
+    x = "Variable",
+    y = "Coefficient"
+  ) +
+  theme_minimal()+
+  theme(
+    axis.text.y = element_text(size = 10, hjust = 1),  # Adjusts the size and alignment of y-axis labels
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Centers the plot title with bold formatting
+  )
+
+#summary(lasso_model)
+```
+
 
 ```{r}
 # Extract the dummy variable names from selected_features

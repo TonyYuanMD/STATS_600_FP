@@ -813,11 +813,34 @@ confusionMatrix(predicted_classes, test_data$depressed)
 
 roc_curve <- roc(test_data$depressed, predicted_prob)
 print(roc_curve)
-plot(roc_curve)
 auc_value <- auc(roc_curve)
 print(auc_value)
 
-plot(allEffects(me))
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+#plot(allEffects(me))
 ```
 
 ## Inference
@@ -851,18 +874,57 @@ df_nest <- data.frame(Group = rownames(random_effects_nest), Estimate = random_e
 df_cross_race <- data.frame(Group = rownames(random_effects_cross_race), Estimate = random_effects_cross_race[, 1])
 df_cross_marital <- data.frame(Group = rownames(random_effects_cross_marital), Estimate = random_effects_cross_marital[, 1])
 
-# Plot random effects for nested model
+# Nested Model Random Effects
 ggplot(df_nest, aes(x = Group, y = Estimate)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Random Effects (Nested Model)", x = "Race:Marital Status", y = "Random Effect")
+  geom_bar(stat = "identity", fill = "#DB6565", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Nested Model)",
+    x = "Race:Marital Status",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
 
-# Plot random effects for crossed model
+
+
+# Crossed Model (Race)
 ggplot(df_cross_race, aes(x = Group, y = Estimate)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Random Effects (Crossed Model - Race)", x = "Race", y = "Random Effect")
+  geom_bar(stat = "identity", fill = "#EB8E55", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Crossed Model - Race)",
+    x = "Race",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
 
+# Crossed Model (Marital Status)
 ggplot(df_cross_marital, aes(x = Group, y = Estimate)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Random Effects (Crossed Model - Marital Status)", x = "Marital Status", y = "Random Effect")
+  geom_bar(stat = "identity", fill = "#4E73E3", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Crossed Model - Marital Status)",
+    x = "Marital Status",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
 
 ```

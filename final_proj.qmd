@@ -71,11 +71,16 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
+Notice that $ALQ111$, as a factor variable, has only one level, so it
+may cause problems when fitting models.
 
-Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
-
-From the plot above we can see that the problem of imbalanced data exists, as the proportion of depressed cases is much lower than that of its counterpart. To address this problem we propose several approaches: firstly, we use stratified sampling instead of random data splitting; secondly, we assigned higher weights to the depressed cases in training. Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
-
+From the plot above we can see that the problem of imbalanced data
+exists, as the proportion of depressed cases is much lower than that of
+its counterpart. To address this problem we propose several approaches:
+firstly, we use stratified sampling instead of random data splitting;
+secondly, we assigned higher weights to the depressed cases in training.
+Notice that $ALQ111$, as a factor variable, has only one level, so it
+may cause problems when fitting models.
 
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
@@ -86,30 +91,14 @@ numeric_data <- data[sapply(data, is.numeric)]
 cor_matrix <- cor(numeric_data, use = "complete.obs")
 corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
 
-# long_data <- data |>
-#   select(all_of(c("INDFMPIR", "depressed", ordinal_vars, nominal_vars))) |>
-#   pivot_longer(cols = all_of(c("depressed", ordinal_vars, nominal_vars)), names_to = "Category_Variable", values_to = "Group")
-# 
-# # Step 2: Create the facet grid plot
-# ggplot(long_data, aes(x = factor(Group), y = !!sym("INDFMPIR"), fill = Group)) +
-#   geom_violin(alpha = 1, color = "black") +
-#   facet_wrap(Category_Variable ~ .) +  # Creates a grid with rows for each categorical variable
-#   labs(
-#     title = "Continuous Variable Across Categorical Groups",
-#     x = "Groups",
-#     y = "Continuous Variable"
-#   ) +
-#   theme_minimal() +
-#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-#   scale_fill_brewer(palette = "Pastel1")
-
 for (var in continuous_vars) {
   p <- ggplot(data, aes_string(x = "depressed", y = var)) +
     geom_boxplot(aes(fill = as.factor(depressed))) +
     labs(title = paste("Boxplot of", var, "by Depressed Status"),
          x = "Depressed Status",
          y = var) +
-    theme_minimal()
+    theme_minimal() +
+    scale_fill_brewer(palette = "Pastel1")
   print(p)
 }
 
@@ -120,7 +109,8 @@ for (var in c(nominal_vars, ordinal_vars)) {
          x = var,
          y = "Count") +
     theme_minimal() +
-    scale_fill_discrete(name = "Depressed Status")
+    scale_fill_discrete(name = "Depressed Status")+
+    scale_fill_brewer(palette = "Pastel1")
   print(p)
 }
 ```
@@ -129,8 +119,8 @@ for (var in c(nominal_vars, ordinal_vars)) {
 
 ## Prediction
 
-Here we fit the vanilla logistic regression model using all the variables naively, except the $ALQ111$.
-
+Here we fit the vanilla logistic regression model using all the
+variables naively, except the $ALQ111$.
 
 ```{r lr, echo=FALSE}
 set.seed(1)
@@ -230,8 +220,8 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
 
 ```
 
-The above is fitted with only one fold of training data, so here we try a 5-fold
-cross validation on the logistic regression.
+The above is fitted with only one fold of training data, so here we try
+a 5-fold cross validation on the logistic regression.
 
 ```{r lr cv, echo=FALSE}
 cv_control_stratified <- trainControl(
@@ -389,7 +379,11 @@ ggplot(calibration_summary, aes(x = Mean_Predicted_Prob, y = Observed_Proportion
 
 ## Inference
 
-In the last section, we used all the random variables, trying to improve the prediction ability of the model. Here we want to check if the selected variables will be different by first inspecting correlations between each variables and the response, and draw inference from the logistic regression fitted on the subset of variables.
+In the last section, we used all the random variables, trying to improve
+the prediction ability of the model. Here we want to check if the
+selected variables will be different by first inspecting correlations
+between each variables and the response, and draw inference from the
+logistic regression fitted on the subset of variables.
 
 ```{r lr select rvs, echo=FALSE}
 for (var in continuous_vars) {
@@ -463,12 +457,12 @@ lr_infer <- train(
     DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + 
     BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + 
     MCQ010 + MCQ053,
-  data = train_data,
+  data = inference_data,
   method = "glm",        # Specify plain logistic regression
   family = binomial,     # Logistic regression
   metric = "ROC",        # Use AUC as the metric
   trControl = cv_control_stratified, # Cross-validation settings with sampling
-  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
 )
 
 # Print results
@@ -479,7 +473,9 @@ confint(lr_infer$finalModel)
 
 # LASSO Regression
 
-If we convert unordered variables to factor type and keep ordered categorical variables as numeric type, the output of applying LASSO follows.
+If we convert unordered variables to factor type and keep ordered
+categorical variables as numeric type, the output of applying LASSO
+follows.
 
 ```{r, warning = FALSE, message = FALSE}
 # Load the packages we need.
@@ -575,9 +571,6 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
         legend.position = "none") 
 ```
 
-
-
-
 ```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
@@ -668,7 +661,6 @@ selected_features %>%
 #summary(lasso_model)
 ```
 
-
 ```{r}
 # Extract the dummy variable names from selected_features
 selected_dummy_variables <- selected_features$Variable
@@ -710,7 +702,6 @@ selected_original_vars <- selected_vars_sheet$OriginalVariable
 print(selected_original_vars)
 
 ```
-
 
 ```{r}
 library(pROC)
@@ -757,6 +748,7 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
     axis.text = element_text(size = 12)    # Larger axis text
   )
 ```
+
 ```{r}
 
 # Metrics
@@ -780,14 +772,28 @@ auc_value <- auc(roc_curve)
 
 ```
 
-
-
 # Mixed Effects Model
 
-!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!!
+!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!! 
+
 ## Prediction
 
 ```{r mix eff, echo=FALSE}
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor),
+         depressed = recode(depressed, "0" = "No", "1" = "Yes"))
+
+train_index <- createDataPartition(data$depressed, p = 0.6, list = FALSE)
+train_data <- data[train_index, ]
+remaining_data <- data[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
 # Fit the random effects model
 me <- glmer(
   depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + (1 | RIDRETH1 / DMDMARTZ) + (1 | DMDBORN4) + (1 | RIAGENDR),
@@ -834,27 +840,6 @@ me_cross <- glmer(
 
 anova(me_cross, me_nest)
 
-# Extract random effects
-ranef_nest <- ranef(me_nest, condVar = TRUE)
-ranef_cross <- ranef(me_cross, condVar = TRUE)
-
-# Convert random effects to data frame
-ranef_nest_df <- tidy(ranef_nest)
-ranef_cross_df <- tidy(ranef_cross)
-
-# Caterpillar plot for nested model
-ggplot(ranef_nest_df, aes(x = grp, y = estimate)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error)) +
-  facet_wrap(~effect, scales = "free_x") +
-  labs(title = "Random Effects (Nested Model)", x = "Group", y = "Estimate")
-
-# Caterpillar plot for crossed model
-ggplot(ranef_cross_df, aes(x = grp, y = estimate)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error)) +
-  facet_wrap(~effect, scales = "free_x") +
-  labs(title = "Random Effects (Crossed Model)", x = "Group", y = "Estimate")
 
 # Random effects by grouping
 random_effects_nest <- ranef(me_nest)$`DMDMARTZ:RIDRETH1`

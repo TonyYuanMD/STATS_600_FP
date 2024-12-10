@@ -650,7 +650,7 @@ selected_features %>%
   coord_flip() +
   geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
   labs(
-    title = "LASSO Selected Variables and Coefficients",
+    title = "LASSO Selected Variables and Coefficients (MIN)",
     x = "Variable",
     y = "Coefficient"
   ) +
@@ -739,7 +739,7 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
            color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
   labs(
-    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    title = "Receiver Operating Characteristic (ROC) Curve (MIN)",  # Title
     x = "False Positive Rate (1 - Specificity)",              # X-axis label
     y = "True Positive Rate (Sensitivity)"                   # Y-axis label
   ) +
@@ -774,7 +774,8 @@ auc_value <- auc(roc_curve)
 
 ```
 
-Choose lambda 1se as the best lambda.
+### Choose lambda 1se as the best lambda.
+
 ```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
@@ -828,7 +829,7 @@ selected_features %>%
   coord_flip() +
   geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
   labs(
-    title = "LASSO Selected Variables and Coefficients",
+    title = "LASSO Selected Variables and Coefficients (1SE)",
     x = "Variable",
     y = "Coefficient"
   ) +
@@ -917,7 +918,7 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
   annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
            color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
   labs(
-    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    title = "Receiver Operating Characteristic (ROC) Curven (1SE)",  # Title
     x = "False Positive Rate (1 - Specificity)",              # X-axis label
     y = "True Positive Rate (Sensitivity)"                   # Y-axis label
   ) +

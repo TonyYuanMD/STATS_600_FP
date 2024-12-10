@@ -18,6 +18,9 @@ library(caret)
 library(pROC)
 library(leaps)
 library(bestglm)
+library(emmeans)
+library(ggalt)
+library(broom.mixed)
 ```
 
 # Exploratory Data Analysis
@@ -572,6 +575,9 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
         legend.position = "none") 
 ```
 
+
+
+
 ```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
@@ -778,7 +784,7 @@ auc_value <- auc(roc_curve)
 
 # Mixed Effects Model
 
-
+!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!!
 ## Prediction
 
 ```{r mix eff, echo=FALSE}
@@ -809,3 +815,69 @@ plot(allEffects(me))
 ```
 
 ## Inference
+
+```{r me interaction, echo=FALSE}
+# Fit the random effects model
+me_nest <- glmer(
+  depressed ~ INDFMPIR + BMXBMI + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + (1 | RIDRETH1/DMDMARTZ) + DMDBORN4 + RIAGENDR,
+  data = inference_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
+me_cross <- glmer(
+  depressed ~ INDFMPIR + BMXBMI + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + (1 | RIDRETH1) + (1 | DMDMARTZ) + DMDBORN4 + RIAGENDR,
+  data = inference_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
+anova(me_cross, me_nest)
+
+# Extract random effects
+ranef_nest <- ranef(me_nest, condVar = TRUE)
+ranef_cross <- ranef(me_cross, condVar = TRUE)
+
+# Convert random effects to data frame
+ranef_nest_df <- tidy(ranef_nest)
+ranef_cross_df <- tidy(ranef_cross)
+
+# Caterpillar plot for nested model
+ggplot(ranef_nest_df, aes(x = grp, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error)) +
+  facet_wrap(~effect, scales = "free_x") +
+  labs(title = "Random Effects (Nested Model)", x = "Group", y = "Estimate")
+
+# Caterpillar plot for crossed model
+ggplot(ranef_cross_df, aes(x = grp, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error)) +
+  facet_wrap(~effect, scales = "free_x") +
+  labs(title = "Random Effects (Crossed Model)", x = "Group", y = "Estimate")
+
+# Random effects by grouping
+random_effects_nest <- ranef(me_nest)$`DMDMARTZ:RIDRETH1`
+random_effects_cross_race <- ranef(me_cross)$RIDRETH1
+random_effects_cross_marital <- ranef(me_cross)$DMDMARTZ
+
+# Combine for plotting
+df_nest <- data.frame(Group = rownames(random_effects_nest), Estimate = random_effects_nest[, 1])
+df_cross_race <- data.frame(Group = rownames(random_effects_cross_race), Estimate = random_effects_cross_race[, 1])
+df_cross_marital <- data.frame(Group = rownames(random_effects_cross_marital), Estimate = random_effects_cross_marital[, 1])
+
+# Plot random effects for nested model
+ggplot(df_nest, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Random Effects (Nested Model)", x = "Race:Marital Status", y = "Random Effect")
+
+# Plot random effects for crossed model
+ggplot(df_cross_race, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Random Effects (Crossed Model - Race)", x = "Race", y = "Random Effect")
+
+ggplot(df_cross_marital, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Random Effects (Crossed Model - Marital Status)", x = "Marital Status", y = "Random Effect")
+
+```

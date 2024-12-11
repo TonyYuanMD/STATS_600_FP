@@ -1,6 +1,12 @@
 ---
 title: "final_proj"
-format: html
+execute: 
+  error: true
+  warning: false
+author: "Haina Qian, Hongda Yuan"
+format: 
+  html:
+    embed-resources: true
 editor: source
 ---
 

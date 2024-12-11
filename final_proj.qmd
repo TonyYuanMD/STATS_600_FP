@@ -4,7 +4,7 @@ format: html
 editor: source
 ---
 
-```{r lib, echo=FALSE}
+```{r lib, echo=FALSE, message=FALSE, warning=FALSE}
 library(ggplot2)
 library(dplyr)
 library(tidyverse)
@@ -795,8 +795,6 @@ cv_data <- data.frame(
 # Identify the best lambda values.
 best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
 best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
-
-
 
 
 

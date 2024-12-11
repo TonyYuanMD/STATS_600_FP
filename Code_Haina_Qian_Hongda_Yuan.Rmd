@@ -10,6 +10,7 @@ format:
 editor: source
 ---
 
+Please make sure the following library are correctly installed on your machine, so you can run through the whole markdown file all at once.
 
 ```{r lib, echo=FALSE, message=FALSE, warning=FALSE}
 library(ggplot2)
@@ -78,16 +79,12 @@ ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
   scale_fill_brewer(palette = "Pastel1")
 ```
 
-Notice that $ALQ111$, as a factor variable, has only one level, so it
-may cause problems when fitting models.
+Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
 
-From the plot above we can see that the problem of imbalanced data
-exists, as the proportion of depressed cases is much lower than that of
-its counterpart. To address this problem we propose several approaches:
+From the plot above we can see that the problem of imbalanced data exists, as the proportion of depressed cases is much lower than that of its counterpart. To address this problem we propose several approaches:
 firstly, we use stratified sampling instead of random data splitting;
 secondly, we assigned higher weights to the depressed cases in training.
-Notice that $ALQ111$, as a factor variable, has only one level, so it
-may cause problems when fitting models.
+Notice that $ALQ111$, as a factor variable, has only one level, so it may cause problems when fitting models.
 
 ```{r, echo=FALSE}
 # 2. Correlation Heatmap for Numeric Variables
@@ -126,8 +123,7 @@ for (var in c(nominal_vars, ordinal_vars)) {
 
 ## Prediction
 
-Here we fit the vanilla logistic regression model using all the
-variables naively, except the $ALQ111$.
+Here we fit the vanilla logistic regression model using all the variables naively, except the $ALQ111$.
 
 ```{r lr, echo=FALSE}
 set.seed(1)
@@ -227,8 +223,7 @@ ggplot(roc_data, aes(x = FPR, y = TPR)) +
 
 ```
 
-The above is fitted with only one fold of training data, so here we try
-a 5-fold cross validation on the logistic regression.
+The above is fitted with only one fold of training data, so here we try a 5-fold cross validation on the logistic regression.
 
 ```{r lr cv, echo=FALSE}
 cv_control_stratified <- trainControl(
@@ -386,11 +381,7 @@ ggplot(calibration_summary, aes(x = Mean_Predicted_Prob, y = Observed_Proportion
 
 ## Inference
 
-In the last section, we used all the random variables, trying to improve
-the prediction ability of the model. Here we want to check if the
-selected variables will be different by first inspecting correlations
-between each variables and the response, and draw inference from the
-logistic regression fitted on the subset of variables.
+In the last section, we used all the random variables, trying to improve he prediction ability of the model. Here we want to check if the selected variables will be different by first inspecting correlations between each variables and the response, and draw inference from the logistic regression fitted on the subset of variables.
 
 ```{r lr select rvs, echo=FALSE}
 for (var in continuous_vars) {
@@ -480,9 +471,7 @@ confint(lr_infer$finalModel)
 
 # LASSO Regression
 
-If we convert unordered variables to factor type and keep ordered
-categorical variables as numeric type, the output of applying LASSO
-follows.
+If we convert unordered variables to factor type and keep ordered categorical variables as numeric type, the output of applying LASSO follows.
 
 ```{r, warning = FALSE, message = FALSE}
 # Load the packages we need.
@@ -577,7 +566,9 @@ ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
   theme(plot.title = element_text(hjust = 0.5),
         legend.position = "none") 
 ```
+
 Find the best lambda, choose lambda min as the best lambda.
+
 ```{r}
 # Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
 ## Convert train_data_processed into a standard matrix.
@@ -958,8 +949,6 @@ auc_value <- auc(roc_curve)
 ```
 
 # Mixed Effects Model
-
-!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!! 
 
 ## Prediction
 

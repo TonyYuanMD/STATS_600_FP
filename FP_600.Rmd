@@ -1,0 +1,1115 @@
+---
+title: "final_proj"
+execute: 
+  error: true
+  warning: false
+author: "Haina Qian, Hongda Yuan"
+format: 
+  html:
+    embed-resources: true
+editor: source
+---
+
+
+```{r lib, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(reshape2)
+library(corrplot)
+library(inspectdf)
+library(glmnet)
+library(effects)
+library(caret)
+library(pROC)
+library(leaps)
+library(bestglm)
+library(emmeans)
+library(ggalt)
+library(broom.mixed)
+```
+
+# Exploratory Data Analysis
+
+```{r prep, echo=FALSE}
+data <- read.csv("data.csv")
+# Categorizes variables.
+nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
+                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
+ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
+                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
+continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
+
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor))
+```
+
+```{r EDA, echo=FALSE}
+# Step 2: Reshape data into a long format for ggplot
+# Gather categorical variables into a key-value pair structure
+long_data <- data |>
+  select(! all_of(continuous_vars)) |>
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category")
+
+# Step 3: Calculate proportions for each category in each variable
+prop_data <- long_data |>
+  group_by(Variable, Category) |>
+  summarise(Count = n(), .groups = "drop") |>
+  group_by(Variable) |>
+  mutate(Proportion = Count / sum(Count)) |>
+  arrange(Variable, desc(Category)) |> # Arrange for consistent stacking
+  mutate(Cumulative = cumsum(Proportion) - Proportion / 2) # Position for labels
+
+# Step 4: Create stacked bar chart with proportion labels
+ggplot(prop_data, aes(x = Variable, y = Proportion, fill = Category)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  geom_text(aes(label = scales::percent(Proportion, accuracy = 1), y = Cumulative),
+            color = "black", size = 3) + # Add labels on the bars
+  labs(
+    title = "Proportions of Categories for Each Categorical Variable",
+    x = "Categorical Variables",
+    y = "Proportion"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+Notice that $ALQ111$, as a factor variable, has only one level, so it
+may cause problems when fitting models.
+
+From the plot above we can see that the problem of imbalanced data
+exists, as the proportion of depressed cases is much lower than that of
+its counterpart. To address this problem we propose several approaches:
+firstly, we use stratified sampling instead of random data splitting;
+secondly, we assigned higher weights to the depressed cases in training.
+Notice that $ALQ111$, as a factor variable, has only one level, so it
+may cause problems when fitting models.
+
+```{r, echo=FALSE}
+# 2. Correlation Heatmap for Numeric Variables
+# Select numeric columns
+numeric_data <- data[sapply(data, is.numeric)]
+
+# Compute correlations
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+corrplot(cor_matrix, method = "color", tl.col = "black", tl.srt = 45, addCoef.col = "black")
+
+for (var in continuous_vars) {
+  p <- ggplot(data, aes_string(x = "depressed", y = var)) +
+    geom_boxplot(aes(fill = as.factor(depressed))) +
+    labs(title = paste("Boxplot of", var, "by Depressed Status"),
+         x = "Depressed Status",
+         y = var) +
+    theme_minimal() +
+    scale_fill_brewer(palette = "Pastel1")
+  print(p)
+}
+
+for (var in c(nominal_vars, ordinal_vars)) {
+  p <- ggplot(data, aes_string(x = var, fill = "as.factor(depressed)")) +
+    geom_bar(position = "dodge") +
+    labs(title = paste("Barplot of", var, "by Depressed Status"),
+         x = var,
+         y = "Count") +
+    theme_minimal() +
+    scale_fill_discrete(name = "Depressed Status")+
+    scale_fill_brewer(palette = "Pastel1")
+  print(p)
+}
+```
+
+# Logistic Regression
+
+## Prediction
+
+Here we fit the vanilla logistic regression model using all the
+variables naively, except the $ALQ111$.
+
+```{r lr, echo=FALSE}
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor),
+         depressed = recode(depressed, "0" = "No", "1" = "Yes"))
+
+train_index <- createDataPartition(data$depressed, p = 0.6, list = FALSE)
+train_data <- data[train_index, ]
+remaining_data <- data[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
+
+# Build vanilla logistic regression model
+vanilla_lr <- glm(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+)
+
+summary(vanilla_lr)
+
+# Extract coefficients and visualize them.
+coefficients <- coef(summary(vanilla_lr))
+coef_df <- data.frame(
+  Variable = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std.Error = coefficients[, "Std. Error"]
+)
+
+
+
+coef_df <- coef_df %>%
+  mutate(Significant = ifelse(coefficients[, "Pr(>|z|)"] < 0.05, "Significant", "Not Significant"))
+
+
+ggplot(coef_df, aes(x = reorder(Variable, Estimate), y = Estimate, fill = Significant)) +
+  geom_col(width = 0.9) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  scale_fill_manual(values = c("Significant" = "#4E73E3", "Not Significant" = "#E6E6E6")) +
+  labs(
+    title = "Logistic Regression Coefficients with Significance Highlight",
+    x = "Variable",
+    y = "Estimate",
+    fill = "Significance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 6, hjust = 1)
+  )
+
+
+# Metrics
+predicted_prob <- predict(vanilla_lr, type = "response", newdata = test_data)
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+
+
+```
+
+The above is fitted with only one fold of training data, so here we try
+a 5-fold cross validation on the logistic regression.
+
+```{r lr cv, echo=FALSE}
+cv_control_stratified <- trainControl(
+  method = "cv",          # Cross-validation
+  number = 10,             # Number of folds
+  classProbs = TRUE,      # For metrics like AUC
+  summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
+  sampling = NULL         # Upsample the minority class for balanced folds
+)
+
+# Train logistic regression model with stratified sampling
+lr_cv <- train(
+  depressed ~ RIAGENDR + RIDAGEYR + RIDRETH1 + DMDBORN4 + DMDEDUC2 + 
+    DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ121 + ALQ151 + BPQ020 + 
+    BPQ080 + DBQ700 + DBQ197 + DBD895 + DBD905 + DBD910 + SMQ020 + DIQ010 + 
+    MCQ010 + MCQ053 + MCQ092,
+  data = train_data,
+  method = "glm",        # Specify plain logistic regression
+  family = binomial,     # Logistic regression
+  metric = "ROC",        # Use AUC as the metric
+  trControl = cv_control_stratified, # Cross-validation settings with sampling
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+)
+
+# Print results
+print(lr_cv$finalModel)
+summary(lr_cv$finalModel)
+
+# Extract coefficients and visualize them.
+coefficients <- coef(summary(lr_cv$finalModel))
+coef_df <- data.frame(
+  Variable = rownames(coefficients),
+  Estimate = coefficients[, "Estimate"],
+  Std.Error = coefficients[, "Std. Error"]
+)
+
+
+coef_df <- coef_df %>%
+  mutate(Significant = ifelse(coefficients[, "Pr(>|z|)"] < 0.05, "Significant", "Not Significant"))
+
+
+ggplot(coef_df, aes(x = reorder(Variable, Estimate), y = Estimate, fill = Significant)) +
+  geom_col(width = 0.9) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  scale_fill_manual(values = c("Significant" = "#4E73E3", "Not Significant" = "#E6E6E6")) +
+  labs(
+    title = "Logistic Regression Coefficients with Significance Highlight",
+    x = "Variable",
+    y = "Estimate",
+    fill = "Significance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 6, hjust = 1)
+  )
+
+
+# Metrics
+predicted_prob <- predict(lr_cv, test_data, type = "prob")
+predicted_classes <- predict(lr_cv, test_data, type = "raw") # take the class with the larger prob.
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+# Heatmap of confusion matrix
+conf_matrix <- confusionMatrix(predicted_classes, test_data$depressed)
+conf_matrix_df <- as.data.frame(conf_matrix$table)
+
+ggplot(conf_matrix_df, aes(Prediction, Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "#FFFFFF", size = 6) +
+  scale_fill_gradient(low = "#6EC0E6", high = "#FF6961") +
+  labs(
+    title = "Confusion Matrix",
+    x = "Predicted",
+    y = "Actual"
+  ) +
+  theme_minimal()+
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+roc_curve <- roc(test_data$depressed, predicted_prob$Yes)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+# 添加权重列
+calibration_data <- data.frame(
+  Predicted_Prob = predicted_prob$Yes,  # 模型的预测概率
+  Observed = as.numeric(test_data$depressed == "Yes"),  # 实际标签
+  Weight = ifelse(test_data$depressed == "Yes", 10, 1)  # 测试集中权重
+)
+
+# 分组计算校准指标（引入权重）
+calibration_summary <- calibration_data %>%
+  mutate(Probability_Bin = cut(Predicted_Prob, breaks = seq(0, 1, by = 0.1), include.lowest = TRUE)) %>%
+  group_by(Probability_Bin) %>%
+  summarise(
+    Mean_Predicted_Prob = weighted.mean(Predicted_Prob, Weight),  # 加权平均预测概率
+    Observed_Proportion = weighted.mean(Observed, Weight)         # 加权观测比例
+  )
+
+
+# 绘制校准曲线
+ggplot(calibration_summary, aes(x = Mean_Predicted_Prob, y = Observed_Proportion)) +
+  geom_point(size = 3, color = "#4E73E3") +
+  geom_line(color = "#4E73E3", size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(
+    title = "Calibration Curve (Weighted)",
+    x = "Mean Predicted Probability",
+    y = "Observed Proportion"
+  ) +
+  xlim(0,1) +
+  ylim(0,1) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+
+
+```
+
+## Inference
+
+In the last section, we used all the random variables, trying to improve
+the prediction ability of the model. Here we want to check if the
+selected variables will be different by first inspecting correlations
+between each variables and the response, and draw inference from the
+logistic regression fitted on the subset of variables.
+
+```{r lr select rvs, echo=FALSE}
+for (var in continuous_vars) {
+  p <- ggplot(train_data, aes_string(x = "depressed", y = var)) +
+    geom_boxplot(aes(fill = as.factor(depressed))) +
+    labs(title = paste("Boxplot of", var, "by Depressed Status"),
+         x = "Depressed Status",
+         y = var) +
+    theme_minimal()
+  print(p)
+}
+
+for (var in c(nominal_vars, ordinal_vars)) {
+  p <- ggplot(train_data, aes_string(x = var, fill = "as.factor(depressed)")) +
+    geom_bar(position = "dodge") +
+    labs(title = paste("Barplot of", var, "by Depressed Status"),
+         x = var,
+         y = "Count") +
+    theme_minimal() +
+    scale_fill_discrete(name = "Depressed Status")
+  print(p)
+}
+```
+
+```{r ht for select rvs, echo=FALSE}
+# t test for cont.
+for (var in continuous_vars) {
+  test <- t.test(train_data[[var]] ~ train_data$depressed)
+  cat(paste("t-test for", var, ":\n"))
+  print(test)
+  cat("\n")
+}
+# MW for cont.
+for (var in continuous_vars) {
+  test <- wilcox.test(train_data[[var]] ~ train_data$depressed)
+  cat(paste("Wilcoxon test for", var, ":\n"))
+  print(test)
+  cat("\n")
+}
+# cs for cate.
+for (var in c(nominal_vars, ordinal_vars)) {
+  test <- chisq.test(table(train_data[[var]], train_data$depressed))
+  cat(paste("Chi-square test for", var, ":\n"))
+  print(test)
+  cat("\n")
+}
+# fe for cate.
+for (var in c(nominal_vars, ordinal_vars)) {
+  if (length(unique(train_data[[var]])) == 2) {  # Only for 2x2 tables
+    test <- fisher.test(table(train_data[[var]], train_data$depressed))
+    cat(paste("Fisher's Exact test for", var, ":\n"))
+    print(test)
+    cat("\n")
+  }
+}
+
+```
+
+```{r posi, echo=FALSE}
+cv_control_stratified <- trainControl(
+  method = "cv",          # Cross-validation
+  number = 10,             # Number of folds
+  classProbs = TRUE,      # For metrics like AUC
+  summaryFunction = twoClassSummary,  # Use AUC as the evaluation metric
+  sampling = NULL         # Upsample the minority class for balanced folds
+)
+
+# Train logistic regression model with stratified sampling
+lr_infer <- train(
+  depressed ~ RIAGENDR + DMDBORN4 + DMDEDUC2 + 
+    DMDMARTZ + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + 
+    BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + 
+    MCQ010 + MCQ053,
+  data = inference_data,
+  method = "glm",        # Specify plain logistic regression
+  family = binomial,     # Logistic regression
+  metric = "ROC",        # Use AUC as the metric
+  trControl = cv_control_stratified, # Cross-validation settings with sampling
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
+# Print results
+print(lr_infer$finalModel)
+summary(lr_infer$finalModel)
+confint(lr_infer$finalModel)
+```
+
+# LASSO Regression
+
+If we convert unordered variables to factor type and keep ordered
+categorical variables as numeric type, the output of applying LASSO
+follows.
+
+```{r, warning = FALSE, message = FALSE}
+# Load the packages we need.
+library(tidyverse)
+library(glmnet)
+library(conflicted)
+
+# Set conflict functions to require explicit calls.
+conflict_prefer("filter", "dplyr", quiet = TRUE)
+conflict_prefer("lag", "dplyr", quiet = TRUE)
+conflict_prefer("select", "dplyr", quiet = TRUE)
+
+
+# Categorizes variables.
+nominal_vars <- c("RIAGENDR", "RIDRETH1", "DMDBORN4", "DMDMARTZ", "SMQ020", 
+                  "DIQ010", "MCQ010", "MCQ053", "MCQ092")
+ordinal_vars <- c("DMDEDUC2", "INDFMMPC", "ALQ111", "ALQ121", "ALQ151", 
+                  "BPQ020", "BPQ080", "DBQ700", "DBQ197")
+continuous_vars <- c("RIDAGEYR", "BMXBMI", "INDFMPIR", "DBD895", "DBD905", "DBD910")
+
+total_vars <- c(nominal_vars, ordinal_vars, continuous_vars)
+print(total_vars)
+
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+
+# Convert unordered variables to factor type.
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(all_of(nominal_vars), as.factor),
+         across(all_of(ordinal_vars), ~ as.numeric(.)))
+            # depressed = recode(depressed, "0" = "No", "1" = "Yes"
+         
+
+# Separate continuous vaiables.
+X_continuous <- data %>% select(all_of(continuous_vars))
+
+# Standardize continuous variables.
+X_continuous_scaled <- scale(X_continuous)
+
+# Perform dummy variables encoding for unordered factor variables.
+X_nominal_encoded <- model.matrix(~ . - 1, data = data %>% select(all_of(nominal_vars)))
+
+# Combine continuous variables, ordered categorical variables and dummy variables.
+X_processed <- cbind(X_continuous_scaled, data %>% select(all_of(ordinal_vars)), X_nominal_encoded)
+
+# Convert X_processed into a standard matrix.
+X_processed <- as.matrix(X_processed)
+
+# Ensure all data in the matrix is of numeric type.
+X_processed <- apply(X_processed, 2, as.numeric)
+
+# Extract the dependent variable.
+y <- data$depressed
+
+# Combine X_processed and y as dataframe.
+data_processed <- as.data.frame(cbind(X_processed, depressed = y))
+
+# Divide the data into three subsets to conduct train, test and inference.
+train_index <- createDataPartition(data_processed$depressed, p = 0.6, list = FALSE)
+train_data <- data_processed[train_index, ]
+remaining_data <- data_processed[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
+
+# Apply the LASSO.
+lasso_model <- glmnet(train_data %>% select(-depressed), train_data$depressed,
+                family = 'binomial', 
+                intercept = FALSE, alpha = 1, thresh = 1e-7)
+
+# Extract coefficient paths from the LASSO model.
+lasso_coefs <- as.matrix(lasso_model$beta)
+lambda_vals <- lasso_model$lambda
+
+# Convert the coefficient matrix to a long format for ggplot.
+lasso_df <- as.data.frame(t(lasso_coefs)) %>%
+  mutate(log_lambda = log(lambda_vals)) %>%
+  pivot_longer(cols = -log_lambda, names_to = "variable", values_to = "coefficient")
+
+# Plot LASSO paths using ggplot.
+ggplot(lasso_df, aes(x = log_lambda, y = coefficient, color = variable)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = rainbow(length(unique(lasso_df$variable)))) +  
+  labs(
+    title = "LASSO Regularization Paths",
+    x = "Log(Lambda)",
+    y = "Coefficients"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none") 
+```
+Find the best lambda, choose lambda min as the best lambda.
+```{r}
+# Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
+## Convert train_data_processed into a standard matrix.
+train_data_processed <- as.matrix(train_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+train_data_processed <- apply(train_data_processed, 2, as.numeric)
+mod_cv <- cv.glmnet(x=train_data_processed, y=train_data$depressed, family="binomial", nfolds = 4, # Default: nfolds = 10
+                    intercept = FALSE, alpha=1, thresh = 1e-7, weights = ifelse(train_data$depressed == 1, 10, 1))
+
+# Extract cross-validation data.
+cv_data <- data.frame(
+  lambda = mod_cv$lambda,          # Lambda values used in cross-validation
+  mean_cv_error = mod_cv$cvm,      # Mean cross-validation error for each lambda
+  upper_error = mod_cv$cvup,       # Upper bound of the cross-validation error
+  lower_error = mod_cv$cvlo        # Lower bound of the cross-validation error
+)
+
+# Identify the best lambda values.
+best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
+best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
+cat("best_lambda_1se: ", best_lambda_1se, "\n")
+cat("best_lambda_min: ", best_lambda_min, "\n")
+
+
+# Plot the cross-validation curve.
+ggplot(cv_data, aes(x = log(lambda), y = mean_cv_error)) +
+  geom_line(size = 1, color = "#4E73E3") +  # Plot the mean cross-validation error curve
+  geom_ribbon(aes(ymin = lower_error, ymax = upper_error), fill = "#4E73E3", alpha = 0.2) +  # Add the error interval
+  geom_vline(xintercept = log(best_lambda_min), linetype = "dashed", color = "#DB6565", size = 1) +  # Highlight lambda.min with a red dashed line
+  geom_vline(xintercept = log(best_lambda_1se), linetype = "dashed", color = "#DB6565", size = 1) +  # Highlight lambda.1se with a green dashed line
+  annotate("text", x = log(best_lambda_min), y = max(cv_data$mean_cv_error), 
+           label = "Min Lambda", color = "#DB6565", vjust = -0.5, size = 4) +  # Add text label for lambda.min
+  annotate("text", x = log(best_lambda_1se), y = max(cv_data$mean_cv_error), 
+           label = "1-SE Lambda", color = "#DB6565", vjust = -0.5, size = 4) +  # Add text label for lambda.1se
+  labs(
+    title = "Cross-Validation Curve for LASSO",    # Title of the plot
+    x = "Log(Lambda)",                             # X-axis label
+    y = "Mean Cross-Validation Error"             # Y-axis label
+  ) +
+  theme_minimal() +                                # Use a minimal theme for the plot
+  theme(plot.title = element_text(hjust = 0.5))    # Center-align the title
+
+
+# Select best_lambda_min as best_lambda.
+best_lambda <- best_lambda_min
+
+# Retrieve the coefficients of the model corresponding to the best lambda.
+best_model_coef <- coef(mod_cv, s = best_lambda)
+
+# Convert sparse matrix to a regular dataframe and filter out zero coefficients.
+selected_features <- as.data.frame(as.matrix(best_model_coef))
+selected_features <- selected_features %>%
+  rownames_to_column(var = "Variable") %>%
+  filter(s1 != 0) %>%
+  rename(Coefficient = s1)
+
+# Print the selected variables and their coefficients.
+print(selected_features)
+
+# Load the package we need.
+library(selectiveInference)
+
+# Post selective inference.
+#post_fit <- fixedLassoInf(train_data_processed, train_data$depressed, beta = coef(mod_cv)[-1], lambda = best_lambda)
+#print(post_fit)
+
+```
+
+
+
+```{r}
+# Visualization.
+selected_features %>%
+  filter(Variable != "(Intercept)") %>%
+  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  labs(
+    title = "LASSO Selected Variables and Coefficients",
+    x = "Variable",
+    y = "Coefficient"
+  ) +
+  theme_minimal()+
+  theme(
+    axis.text.y = element_text(size = 10, hjust = 1),  # Adjusts the size and alignment of y-axis labels
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Centers the plot title with bold formatting
+  )
+
+#summary(lasso_model)
+```
+
+```{r}
+# Extract the dummy variable names from selected_features
+selected_dummy_variables <- selected_features$Variable
+
+# Extract the original factor variable names from nominal_vars
+nominal_variables <- nominal_vars
+
+# Match dummy variable names to their corresponding original factor variable names
+dummy_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables,
+  OriginalVariable = sapply(selected_dummy_variables, function(dummy) {
+    # Identify the original factor variable based on the prefix of the dummy variable name
+    matched_var <- nominal_variables[sapply(nominal_variables, function(nominal_var) {
+      startsWith(dummy, paste0(nominal_var, ""))
+    })]
+    if (length(matched_var) > 0) return(matched_var[1]) else return(NA)
+  })
+)
+
+
+cont_ord_vars <-  c(continuous_vars, ordinal_vars)
+# Add continuous variables directly
+continuous_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars],
+  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars]
+)
+
+# Combine mappings for dummy variables and continuous variables
+selected_vars_sheet <- rbind(
+  dummy_mapping %>% filter(!is.na(OriginalVariable)),
+  continuous_mapping
+) %>%
+  distinct(OriginalVariable)
+
+# Print the final mapping
+selected_original_vars <- selected_vars_sheet$OriginalVariable
+
+#Print the selected original variables.
+print(selected_original_vars)
+
+```
+
+```{r}
+library(pROC)
+
+# Predict the probabilities of the positive class using the model and best lambda.
+## Convert test_data_processed into a standard matrix.
+test_data_processed <- as.matrix(test_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+test_data_processed <- apply(test_data_processed, 2, as.numeric)
+predicted_prob <- predict(mod_cv, newx = test_data_processed, s = best_lambda, type = "response")
+#print(predicted_prob)
+
+# Calculate the ROC curve for the predicted probabilities and the true labels.
+roc_curve <- roc(test_data$depressed, predicted_prob[, 1], direction = "<")
+
+# Extract and print the Area Under the Curve (AUC) value.
+auc_value <- auc(roc_curve)  
+print(paste("AUC:", auc_value))
+
+library(ggplot2)
+library(dplyr)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+```
+
+```{r}
+
+# Metrics
+
+# Convert floating-point probabilities into binary classification labels
+predicted_test_data <- ifelse(predicted_prob[, 1] > 0.5, 1, 0)  # Set threshold to 0.5
+
+# Convert to factors
+predicted_test_data <- factor(predicted_test_data, levels = c(0, 1))
+test_actual_y <- factor(test_data$depressed, levels = c(0, 1))
+
+# Compute confusion matrix
+confusion_matrix <- confusionMatrix(predicted_test_data, test_actual_y)
+print(confusion_matrix)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+#print(auc_value)
+
+```
+
+Choose lambda 1se as the best lambda.
+```{r}
+# Perform cross-validated Lasso logistic regression (alpha = 1) on the training data.
+## Convert train_data_processed into a standard matrix.
+train_data_processed <- as.matrix(train_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+train_data_processed <- apply(train_data_processed, 2, as.numeric)
+mod_cv <- cv.glmnet(x=train_data_processed, y=train_data$depressed, family="binomial", nfolds = 4, # Default: nfolds = 10
+                    intercept = FALSE, alpha=1, thresh = 1e-7, weights = ifelse(train_data$depressed == 1, 10, 1))
+
+# Extract cross-validation data.
+cv_data <- data.frame(
+  lambda = mod_cv$lambda,          # Lambda values used in cross-validation
+  mean_cv_error = mod_cv$cvm,      # Mean cross-validation error for each lambda
+  upper_error = mod_cv$cvup,       # Upper bound of the cross-validation error
+  lower_error = mod_cv$cvlo        # Lower bound of the cross-validation error
+)
+
+# Identify the best lambda values.
+best_lambda_min <- mod_cv$lambda.min    # Lambda that minimizes cross-validation error
+best_lambda_1se <- mod_cv$lambda.1se    # Lambda within one standard error of the minimum
+
+
+
+# Select best_lambda_min as best_lambda.
+best_lambda <- best_lambda_1se
+
+# Retrieve the coefficients of the model corresponding to the best lambda.
+best_model_coef <- coef(mod_cv, s = best_lambda)
+
+# Convert sparse matrix to a regular dataframe and filter out zero coefficients.
+selected_features <- as.data.frame(as.matrix(best_model_coef))
+selected_features <- selected_features %>%
+  rownames_to_column(var = "Variable") %>%
+  filter(s1 != 0) %>%
+  rename(Coefficient = s1)
+
+# Print the selected variables and their coefficients.
+print(selected_features)
+
+
+```
+
+```{r}
+# Visualization.
+selected_features %>%
+  filter(Variable != "(Intercept)") %>%
+  ggplot(aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "#4E73E3") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "#DB6565") +
+  labs(
+    title = "LASSO Selected Variables and Coefficients",
+    x = "Variable",
+    y = "Coefficient"
+  ) +
+  theme_minimal()+
+  theme(
+    axis.text.y = element_text(size = 10, hjust = 1),  # Adjusts the size and alignment of y-axis labels
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Centers the plot title with bold formatting
+  )
+
+#summary(lasso_model)
+```
+
+```{r}
+# Extract the dummy variable names from selected_features
+selected_dummy_variables <- selected_features$Variable
+
+# Extract the original factor variable names from nominal_vars
+nominal_variables <- nominal_vars
+
+# Match dummy variable names to their corresponding original factor variable names
+dummy_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables,
+  OriginalVariable = sapply(selected_dummy_variables, function(dummy) {
+    # Identify the original factor variable based on the prefix of the dummy variable name
+    matched_var <- nominal_variables[sapply(nominal_variables, function(nominal_var) {
+      startsWith(dummy, paste0(nominal_var, ""))
+    })]
+    if (length(matched_var) > 0) return(matched_var[1]) else return(NA)
+  })
+)
+
+
+cont_ord_vars <-  c(continuous_vars, ordinal_vars)
+# Add continuous variables directly
+continuous_mapping <- data.frame(
+  DummyVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars],
+  OriginalVariable = selected_dummy_variables[selected_dummy_variables %in% cont_ord_vars]
+)
+
+# Combine mappings for dummy variables and continuous variables
+selected_vars_sheet <- rbind(
+  dummy_mapping %>% filter(!is.na(OriginalVariable)),
+  continuous_mapping
+) %>%
+  distinct(OriginalVariable)
+
+# Print the final mapping
+selected_original_vars <- selected_vars_sheet$OriginalVariable
+
+#Print the selected original variables.
+print(selected_original_vars)
+
+```
+
+```{r}
+library(pROC)
+
+# Predict the probabilities of the positive class using the model and best lambda.
+## Convert test_data_processed into a standard matrix.
+test_data_processed <- as.matrix(test_data %>% select(-depressed))
+## Ensure all data in the matrix is of numeric type.
+test_data_processed <- apply(test_data_processed, 2, as.numeric)
+predicted_prob <- predict(mod_cv, newx = test_data_processed, s = best_lambda, type = "response")
+#print(predicted_prob)
+
+# Calculate the ROC curve for the predicted probabilities and the true labels.
+roc_curve <- roc(test_data$depressed, predicted_prob[, 1], direction = "<")
+
+# Extract and print the Area Under the Curve (AUC) value.
+auc_value <- auc(roc_curve)  
+print(paste("AUC:", auc_value))
+
+library(ggplot2)
+library(dplyr)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+```
+
+```{r}
+
+# Metrics
+
+# Convert floating-point probabilities into binary classification labels
+predicted_test_data <- ifelse(predicted_prob[, 1] > 0.5, 1, 0)  # Set threshold to 0.5
+
+# Convert to factors
+predicted_test_data <- factor(predicted_test_data, levels = c(0, 1))
+test_actual_y <- factor(test_data$depressed, levels = c(0, 1))
+
+# Compute confusion matrix
+confusion_matrix <- confusionMatrix(predicted_test_data, test_actual_y)
+print(confusion_matrix)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+#plot(roc_curve)
+auc_value <- auc(roc_curve)
+#print(auc_value)
+
+```
+
+# Mixed Effects Model
+
+!!! REMMEBER TO RUN THE DATA LOADING AGAIN !!! 
+
+## Prediction
+
+```{r mix eff, echo=FALSE}
+set.seed(1)
+# Data splitting using stratified sampling
+data <- read.csv("data.csv")
+# Negate to select factor variables (columns NOT in non_factor_vars)
+data <- data |>
+  select(- SEQN) |>
+  mutate(across(!all_of(c(continuous_vars)), as.factor),
+         depressed = recode(depressed, "0" = "No", "1" = "Yes"))
+
+train_index <- createDataPartition(data$depressed, p = 0.6, list = FALSE)
+train_data <- data[train_index, ]
+remaining_data <- data[-train_index, ]
+test_index <- createDataPartition(remaining_data$depressed, p = 0.5, list = FALSE)
+test_data <- remaining_data[test_index, ]
+inference_data <- remaining_data[-test_index, ]
+# Fit the random effects model
+me <- glmer(
+  depressed ~ DMDEDUC2 + INDFMPIR + BMXBMI + INDFMMPC + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + MCQ053 + (1 | RIDRETH1 / DMDMARTZ) + (1 | DMDBORN4) + (1 | RIAGENDR),
+  data = train_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(train_data$depressed == "Yes", 10, 1)
+)
+
+# Model summary
+summary(me)
+
+# Get predicted effects
+predicted_prob <- predict(me, type = "response", newdata = test_data)
+predicted_classes <- as.factor(ifelse(predicted_prob > .5, "Yes", "No"))
+
+confusionMatrix(predicted_classes, test_data$depressed)
+
+roc_curve <- roc(test_data$depressed, predicted_prob)
+print(roc_curve)
+auc_value <- auc(roc_curve)
+print(auc_value)
+
+# Extract data from the ROC object
+roc_data <- data.frame(
+  TPR = roc_curve$sensitivities,  # True Positive Rate (Sensitivity)
+  FPR = 1 - roc_curve$specificities  # False Positive Rate (1 - Specificity)
+)
+
+# Plot the ROC curve using ggplot2
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(color = "#4E73E3", size = 1) +  # ROC curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#5C5C5C") +  # Diagonal line
+  annotate("text", x = 0.75, y = 0.25, label = paste("AUC =", round(auc_value, 2)), 
+           color = "#DB6565", size = 5, fontface = "bold") +  # Add AUC annotation
+  labs(
+    title = "Receiver Operating Characteristic (ROC) Curve",  # Title
+    x = "False Positive Rate (1 - Specificity)",              # X-axis label
+    y = "True Positive Rate (Sensitivity)"                   # Y-axis label
+  ) +
+  theme_minimal() +  # Minimal theme for clean appearance
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 14),  # Larger axis titles
+    axis.text = element_text(size = 12)    # Larger axis text
+  )
+
+#plot(allEffects(me))
+```
+
+## Inference
+
+```{r me interaction, echo=FALSE}
+# Fit the random effects model
+me_nest <- glmer(
+  depressed ~ INDFMPIR + BMXBMI + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + (1 | RIDRETH1/DMDMARTZ) + DMDBORN4 + RIAGENDR,
+  data = inference_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
+me_cross <- glmer(
+  depressed ~ INDFMPIR + BMXBMI + ALQ151 + BPQ020 + BPQ080 + DBQ700 + DBD910 + SMQ020 + DIQ010 + MCQ010 + (1 | RIDRETH1) + (1 | DMDMARTZ) + DMDBORN4 + RIAGENDR,
+  data = inference_data,
+  family = binomial(link = "logit"),
+  weights = ifelse(inference_data$depressed == "Yes", 10, 1)
+)
+
+anova(me_cross, me_nest)
+
+
+# Random effects by grouping
+random_effects_nest <- ranef(me_nest)$`DMDMARTZ:RIDRETH1`
+random_effects_cross_race <- ranef(me_cross)$RIDRETH1
+random_effects_cross_marital <- ranef(me_cross)$DMDMARTZ
+
+# Combine for plotting
+df_nest <- data.frame(Group = rownames(random_effects_nest), Estimate = random_effects_nest[, 1])
+df_cross_race <- data.frame(Group = rownames(random_effects_cross_race), Estimate = random_effects_cross_race[, 1])
+df_cross_marital <- data.frame(Group = rownames(random_effects_cross_marital), Estimate = random_effects_cross_marital[, 1])
+
+# Nested Model Random Effects
+ggplot(df_nest, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity", fill = "#DB6565", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Nested Model)",
+    x = "Race:Marital Status",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+
+
+# Crossed Model (Race)
+ggplot(df_cross_race, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity", fill = "#EB8E55", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Crossed Model - Race)",
+    x = "Race",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Crossed Model (Marital Status)
+ggplot(df_cross_marital, aes(x = Group, y = Estimate)) +
+  geom_bar(stat = "identity", fill = "#4E73E3", color = "#5C5C5C", width = 0.7) +
+  labs(
+    title = "Random Effects (Crossed Model - Marital Status)",
+    x = "Marital Status",
+    y = "Random Effect"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Reference line at 0
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```

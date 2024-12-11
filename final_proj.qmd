@@ -21,6 +21,7 @@ library(bestglm)
 library(emmeans)
 library(ggalt)
 library(broom.mixed)
+library(texreg)
 ```
 
 # Exploratory Data Analysis
